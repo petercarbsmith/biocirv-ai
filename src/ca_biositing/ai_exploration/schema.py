@@ -2,12 +2,18 @@ from sqlalchemy import text
 from typing import List
 
 def fetch_table_metadata(engine, table_name: str, schema: str = None) -> str:
-    """Fetches column names and types for a given table."""
+    """Fetches column names and types for a given table or materialized view."""
+    # information_schema.columns does not include materialized views
     query = text("""
-        SELECT column_name, data_type
-        FROM information_schema.columns
-        WHERE table_name = :table
-        """ + ("AND table_schema = :schema" if schema else ""))
+        SELECT a.attname AS column_name,
+               format_type(a.atttypid, a.atttypmod) AS data_type
+        FROM pg_attribute a
+        JOIN pg_class t ON a.attrelid = t.oid
+        JOIN pg_namespace n ON t.relnamespace = n.oid
+        WHERE t.relname = :table
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+    """ + (" AND n.nspname = :schema" if schema else ""))
 
     params = {"table": table_name}
     if schema:
@@ -28,8 +34,12 @@ def discover_views(engine, schemas: List[str] = ["ca_biositing", "analytics"]) -
         FROM information_schema.views
         WHERE table_schema = ANY(:schemas)
         AND table_name NOT LIKE 'pg_%%'
+        UNION
+        SELECT matviewname as table_name
+        FROM pg_matviews
+        WHERE schemaname = ANY(:schemas)
     """)
-    
+
     try:
         with engine.connect() as conn:
             result = conn.execute(query, {"schemas": schemas})
