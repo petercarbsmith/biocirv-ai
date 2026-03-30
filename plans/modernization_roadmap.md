@@ -174,3 +174,6 @@ Google Colab integrated with GCP Cloud SQL.
 - **Environment Switcher:** Added a robust "Cloud Mode" toggle in
   `sandbox_setup.py` to seamlessly transition between local development and
   managed cloud execution.
+- **Dual-Track Dependency Resolution:** Adopted a flexible dependency strategy:
+  preserving `pandas 1.5.3` pins for local macOS development while allowing
+  Colab to use its native library versions to avoid runtime library conflicts.
