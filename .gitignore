@@ -1,18 +1,46 @@
-# Standard Python/Pixi gitignore
+# pixi environments
+.pixi/
+pixi.lock
+
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Environment variables
 .env
-.venv
-env/
+.env.*
+!.env.example
+
+# Python virtual environments
 venv/
-build/
-dist/
-*.egg-info/
-.pixi/
+env/
+.venv/
+
+# Jupyter Notebooks
 .ipynb_checkpoints/
+
+# Unit test / coverage reports
 .pytest_cache/
-exports/
-charts/
-*.log
+.coverage
+.coverage.*
+htmlcov/
+
+# Local Data and Exports
+exports/charts/*
+!exports/charts/.gitkeep
 *.parquet
+*.csv
+*.log
+
+# Tools and Caches
+.cache/
+.prettier-cache
+node_modules/
+.pulumi/
+
+# macOS
+.DS_Store
+
+# PandasAI
+pandasai.log
