@@ -1,7 +1,7 @@
 from sqlalchemy import text
-from typing import List
+from typing import List, Optional
 
-def fetch_table_metadata(engine, table_name: str, schema: str = None) -> str:
+def fetch_table_metadata(engine, table_name: str, schema: Optional[str] = None) -> str:
     """Fetches column names and types for a given table or materialized view."""
     # information_schema.columns does not include materialized views
     query = text("""
@@ -27,7 +27,7 @@ def fetch_table_metadata(engine, table_name: str, schema: str = None) -> str:
     except Exception:
         return "Unknown columns"
 
-def discover_views(engine, schemas: List[str] = ["ca_biositing", "analytics"]) -> List[str]:
+def discover_views(engine, schemas: List[str] = ["ca_biositing", "data_portal"]) -> List[str]:
     """Automatically discovers all views in the specified schemas."""
     query = text("""
         SELECT table_name

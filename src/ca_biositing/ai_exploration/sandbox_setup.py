@@ -20,7 +20,17 @@ from typing import Optional, List, Any, Dict
 # --- 1. PandasAI Imports ---
 from pandasai.llm.base import LLM
 from pandasai import Agent
-from pandasai.connectors import PostgreSQLConnector
+try:
+    # New separate package for SQL connectors in recent versions
+    from pandasai_sql import PostgreSQLConnector
+except ImportError:
+    try:
+        from pandasai.connectors import PostgreSQLConnector
+    except ImportError:
+        # Fallback to direct engine support if needed, but we prefer the connector
+        # for semantic layer metadata support.
+        PostgreSQLConnector = None
+
 from pandasai.responses.response_parser import ResponseParser
 
 # Internal imports
@@ -197,7 +207,7 @@ class SandboxResponseParser(ResponseParser):
 
     def get_trinity(self, agent: Agent) -> TrinityResult:
         """Returns the TrinityResult for the last execution."""
-        code = agent.last_code_executed
+        code = getattr(agent, "last_code_executed", "")
 
         # Log the code to the session log
         if code:
@@ -237,6 +247,14 @@ class SandboxResponseParser(ResponseParser):
             plot=plot,
             answer=answer
         )
+
+class BioCirvAgent(Agent):
+    """Subclassed Agent to ensure TrinityResult is returned from chat()."""
+    def chat(self, prompt: str, output_type: Optional[str] = None) -> TrinityResult:
+        super().chat(prompt, output_type)
+        if hasattr(self.response_parser, 'get_trinity'):
+            return self.response_parser.get_trinity(self)
+        return TrinityResult(code="", answer="Error: Parser mismatch")
 
 def init_sandbox(model_name: Optional[str] = None, cloud_mode: bool = False):
     """Initializes the sandbox environment and returns the LLM and DB config."""
@@ -288,8 +306,8 @@ def get_cloud_engine(db_config: Dict[str, Any]):
     )
     return engine
 
-def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], schemas: List[str] = ["ca_biositing", "analytics", "data_portal"], view_names: Optional[List[str]] = None):
-    """Creates a SQL-first PandasAI agent using SQLConnector."""
+def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], schemas: List[str] = ["ca_biositing", "data_portal"], view_names: Optional[List[str]] = None):
+    """Creates a SQL-first PandasAI agent using SQLConnector or SQLAlchemy engine."""
 
     # Add search_path to connection arguments for PostgreSQL
     search_path = ",".join(schemas)
@@ -303,83 +321,90 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], schemas: List[str] = ["c
     if view_names is None:
         view_names = discover_views(engine, schemas)
 
-    # Configure PostgreSQLConnectors for all discovered views
+    # Configure connectors or fallback to direct engine
     connectors = []
 
-    # Phase 2: Enrich schema metadata
-    for view in view_names:
-        # Fetch metadata/field descriptions for the view
-        field_descriptions = {}
-        try:
-            # We use the fetch_table_metadata to at least get columns,
-            # ideally we'd have a source for actual descriptions.
-            # For now, we'll label them from documentation if available.
-            column_str = fetch_table_metadata(engine, view)
-            # You could parse column_str to build field_descriptions if needed
-        except Exception:
-            pass
+    if PostgreSQLConnector is not None:
+        # Phase 2: Enrich schema metadata
+        for view in view_names:
+            # Fetch metadata/field descriptions for the view
+            field_descriptions = {}
+            try:
+                # We use the fetch_table_metadata to at least get columns,
+                # ideally we'd have a source for actual descriptions.
+                # For now, we'll label them from documentation if available.
+                column_str = fetch_table_metadata(engine, view)
+                # You could parse column_str to build field_descriptions if needed
+            except Exception:
+                pass
 
-        if db_config.get("cloud_mode"):
-            # For Cloud SQL IAM, we use the engine directly if possible,
-            # but PostgreSQLConnector expects credentials.
-            # PandasAI SQLConnector also supports SQLAlchemy engine directly in recent versions
-            # or we can pass a custom creator/url.
-            connectors.append(PostgreSQLConnector(config={
-                "username": db_config['db_iam_user'],
-                "database": db_config['db_name'],
-                "table": view,
-                "driver": "pg8000",
-                "field_descriptions": field_descriptions,
-                "use_sqlalchemy": True,
-                "engine": engine, # Some versions of PandasAI allow passing the engine
-                "connect_args": {
-                    "options": f"-c search_path={search_path}"
-                }
-            }))
-        else:
-            connectors.append(PostgreSQLConnector(config={
-                "username": db_config['db_user'],
-                "password": db_config['db_pass'],
-                "host": db_config['db_host'],
-                "port": db_config['db_port'],
-                "database": db_config['db_name'],
-                "table": view,
-                "where": None,
-                "field_descriptions": field_descriptions,
-                "connect_args": {
-                    "options": f"-c search_path={search_path}"
-                }
-            }))
+            if db_config.get("cloud_mode"):
+                # For Cloud SQL IAM, we use the engine directly if possible,
+                # but PostgreSQLConnector expects credentials.
+                # PandasAI SQLConnector also supports SQLAlchemy engine directly in recent versions
+                # or we can pass a custom creator/url.
+                connectors.append(PostgreSQLConnector(config={
+                    "username": db_config['db_iam_user'],
+                    "database": db_config['db_name'],
+                    "table": view,
+                    "driver": "pg8000",
+                    "field_descriptions": field_descriptions,
+                    "use_sqlalchemy": True,
+                    "engine": engine, # Some versions of PandasAI allow passing the engine
+                    "connect_args": {
+                        "options": f"-c search_path={search_path}"
+                    }
+                }))
+            else:
+                connectors.append(PostgreSQLConnector(config={
+                    "username": db_config['db_user'],
+                    "password": db_config['db_pass'],
+                    "host": db_config['db_host'],
+                    "port": db_config['db_port'],
+                    "database": db_config['db_name'],
+                    "table": view,
+                    "where": None,
+                    "field_descriptions": field_descriptions,
+                    "connect_args": {
+                        "options": f"-c search_path={search_path}"
+                    }
+                }))
 
-    if not connectors:
-        # Fallback if discovery fails
-        if db_config.get("cloud_mode"):
-            connectors.append(PostgreSQLConnector(config={
-                "username": db_config['db_iam_user'],
-                "database": db_config['db_name'],
-                "table": "analysis_data_view",
-                "use_sqlalchemy": True,
-                "engine": engine,
-                "connect_args": {
-                    "options": f"-c search_path={search_path}"
-                }
-            }))
-        else:
-            connectors.append(PostgreSQLConnector(config={
-                "username": db_config['db_user'],
-                "password": db_config['db_pass'],
-                "host": db_config['db_host'],
-                "port": db_config['db_port'],
-                "database": db_config['db_name'],
-                "table": "analysis_data_view",
-                "where": None,
-                "connect_args": {
-                    "options": f"-c search_path={search_path}"
-                }
-            }))
+        if not connectors:
+            # Fallback if discovery fails but connector is available
+            default_table = "analysis_data_view"
+            if db_config.get("cloud_mode"):
+                connectors.append(PostgreSQLConnector(config={
+                    "username": db_config['db_iam_user'],
+                    "database": db_config['db_name'],
+                    "table": default_table,
+                    "use_sqlalchemy": True,
+                    "engine": engine,
+                    "connect_args": {
+                        "options": f"-c search_path={search_path}"
+                    }
+                }))
+            else:
+                connectors.append(PostgreSQLConnector(config={
+                    "username": db_config['db_user'],
+                    "password": db_config['db_pass'],
+                    "host": db_config['db_host'],
+                    "port": db_config['db_port'],
+                    "database": db_config['db_name'],
+                    "table": default_table,
+                    "where": None,
+                    "connect_args": {
+                        "options": f"-c search_path={search_path}"
+                    }
+                }))
+    else:
+        # Fallback to using the SQLAlchemy engine directly if no connector package is found.
+        # This is less feature-rich (no metadata registry support) but more robust.
+        print("⚠️ Warning: PostgreSQLConnector not found. Falling back to direct SQLAlchemy engine.")
+        connectors = [engine]
 
     # Configure Agent
-    agent = Agent(
+    agent = BioCirvAgent(
         connectors,
         description="A PostgreSQL database containing BioCirv analytics and geospatial views.",
         config={
