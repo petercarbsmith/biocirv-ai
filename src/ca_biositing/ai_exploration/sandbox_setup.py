@@ -269,11 +269,12 @@ def init_sandbox(model_name: Optional[str] = None, cloud_mode: bool = False):
 
     llm = CBORGLLM(api_token=api_key, api_base=api_url, model=selected_model)
 
+    # Use 5434 as default port to avoid conflicts in Colab/local
     config = {
         "db_user": os.getenv("DB_USER", os.getenv("DB_IAM_USER", "biocirv_user")),
         "db_pass": os.getenv("DB_PASSWORD", os.getenv("DB_PASS", "biocirv_dev_password")),
         "db_host": os.getenv("DB_HOST", "127.0.0.1"),
-        "db_port": os.getenv("DB_PORT", "5432"),
+        "db_port": os.getenv("DB_PORT", "5434"),
         "db_name": os.getenv("DB_NAME", "biocirv_db"),
         "cloud_mode": cloud_mode or os.getenv("CLOUD_MODE", "false").lower() == "true",
         "instance_connection_name": os.getenv("INSTANCE_CONNECTION_NAME"),
@@ -331,7 +332,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], schemas: List[str] = ["c
                  connect_args={"sslmode": "disable"},
                  pool_pre_ping=True
              )
-             print("🔌 Connecting to database via Cloud SQL Proxy (Localhost)")
+             print(f"🔌 Connecting to database via Cloud SQL Proxy (Localhost:{db_config['db_port']})")
         else:
              engine = get_cloud_engine(db_config)
              print("☁️ Connecting to database via Cloud SQL Python Connector (IAM)")
@@ -384,7 +385,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], schemas: List[str] = ["c
                     "table": view,
                     "connection": {
                         "host": db_config.get('db_host', '127.0.0.1'),
-                        "port": int(db_config.get('db_port', 5432)),
+                        "port": int(db_config.get('db_port', 5434)),
                         "database": db_config['db_name'],
                         "user": db_config['db_user'],
                         "password": db_config['db_pass']
@@ -437,8 +438,8 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], schemas: List[str] = ["c
                 "type": "postgres",
                 "table": default_table,
                 "connection": {
-                    "host": db_config.get('db_host', 'localhost'),
-                    "port": int(db_config.get('db_port', 5432)),
+                    "host": db_config.get('db_host', '127.0.0.1'),
+                    "port": int(db_config.get('db_port', 5434)),
                     "database": db_config['db_name'],
                     "user": db_config.get('db_user', db_config.get('db_iam_user')),
                     "password": db_config.get('db_pass', 'none')
