@@ -432,31 +432,43 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                 source_config["columns"] = manual_columns
                 source_config["fields"] = manual_columns
 
-            vdf = create_dataset(
-                path=dataset_path,
-                description=f"BioCirv view: {view}",
-                source=source_config
-            )
+            # Direct VirtualDataFrame instantiation if we have manual columns
+            # to ensure they are baked in from the start.
+            try:
+                vdf = VirtualDataFrame(
+                    source=source_config,
+                    description=f"BioCirv view: {view}"
+                )
+                # If path-based registration is required by the environment (Colab/Registry)
+                if hasattr(vdf, "save_to_path"):
+                    vdf.save_to_path(dataset_path)
+            except Exception:
+                vdf = create_dataset(
+                    path=dataset_path,
+                    description=f"BioCirv view: {view}",
+                    source=source_config
+                )
 
             # Force columns onto the VDF if they are still missing but we found them.
             if manual_columns:
-                try:
-                    # Try to set via pandas Index
-                    vdf.columns = pd.Index(manual_columns)
-                except Exception:
-                    # Fallback to internal attributes
-                    for attr in ["_columns", "columns"]:
-                        try:
-                            setattr(vdf, attr, manual_columns)
-                        except Exception:
-                            pass
+                # Use a more targeted approach to avoid Pandas attribute warnings
+                # We target the specific metadata containers used by PandasAI 3.0+
+                targets = [
+                    (vdf, "columns"),
+                    (vdf, "_columns"),
+                    (vdf, "table_columns"),
+                    (getattr(vdf, "_schema", None), "columns"),
+                    (getattr(vdf, "_source", None), "columns"),
+                ]
                 
-                # In some versions of PandasAI, VirtualDataFrame uses a schema object
-                if hasattr(vdf, "_schema") and vdf._schema is not None:
-                    try:
-                        vdf._schema.columns = manual_columns
-                    except Exception:
-                        pass
+                for obj, attr in targets:
+                    if obj is not None and hasattr(obj, attr):
+                        try:
+                            # Try setting as Index then list
+                            val = pd.Index(manual_columns) if attr == "columns" else manual_columns
+                            setattr(obj, attr, val)
+                        except Exception:
+                            continue
             
             # Verify columns were fetched
             # Avoid direct truth check on RangeIndex/Index to prevent "ambiguous truth value" error
