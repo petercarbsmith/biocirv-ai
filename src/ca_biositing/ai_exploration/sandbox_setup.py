@@ -19,24 +19,12 @@ from typing import Optional, List, Any, Dict
 
 # --- 1. PandasAI Imports ---
 from pandasai.llm.base import LLM
-from pandasai import Agent
+from pandasai import Agent, DataFrame, VirtualDataFrame, create as create_dataset
 try:
-    # New separate package for SQL connectors in recent versions
-    from pandasai_sql import PostgreSQLConnector
+    from pandasai.core.response.parser import ResponseParser
 except ImportError:
     try:
-        from pandasai.connectors import PostgreSQLConnector
-    except ImportError:
-        # Fallback to direct engine support if needed, but we prefer the connector
-        # for semantic layer metadata support.
-        PostgreSQLConnector = None
-
-try:
-    from pandasai.responses.response_parser import ResponseParser
-except ImportError:
-    # Older versions or different structure
-    try:
-        from pandasai.responses import ResponseParser
+        from pandasai.responses.response_parser import ResponseParser
     except ImportError:
         ResponseParser = object
 
@@ -335,92 +323,118 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], schemas: List[str] = ["c
     if view_names is None:
         view_names = discover_views(engine, schemas)
 
-    # Configure connectors or fallback to direct engine
+    # Configure connectors using the new Semantic Layer API (PandasAI 3.0+)
     connectors = []
 
-    if PostgreSQLConnector is not None:
-        # Phase 2: Enrich schema metadata
-        for view in view_names:
-            # Fetch metadata/field descriptions for the view
-            field_descriptions = {}
+    # Import load/create once
+    try:
+        from pandasai import load as load_func
+        load_dataset = load_func
+    except ImportError:
+        load_dataset = None
+
+    # Phase 2: Create Virtual DataFrames
+    for view in view_names:
+        try:
+            # Check if dataset already exists to avoid ValueError
+            view_path = view.lower().replace("_", "-")
+            dataset_path = f"biocirv/{view_path}"
+
+            if load_dataset:
+                try:
+                    vdf = load_dataset(dataset_path)
+                    connectors.append(vdf)
+                    continue
+                except Exception:
+                    # If load fails, we proceed to create
+                    pass
+
+            # In PandasAI 3.0+, we use 'create' to define a VirtualDataFrame
+            # and provide a 'source' dictionary.
+            if db_config.get("cloud_mode"):
+                # For Cloud SQL IAM, we must provide the connection details.
+                # Note: We rely on pandasai_sql for the actual execution.
+                source_config = {
+                    "type": "postgres",
+                    "table": view,
+                    "connection": {
+                        "host": db_config.get('db_host', 'localhost'), # Placeholder, will be ignored by engine
+                        "port": int(db_config.get('db_port', 5432)),
+                        "database": db_config['db_name'],
+                        "user": db_config['db_iam_user'],
+                        "password": "none" # IAM Auth doesn't use a static password
+                    }
+                }
+            else:
+                source_config = {
+                    "type": "postgres",
+                    "table": view,
+                    "connection": {
+                        "host": db_config['db_host'],
+                        "port": int(db_config['db_port']),
+                        "database": db_config['db_name'],
+                        "user": db_config['db_user'],
+                        "password": db_config['db_pass']
+                    }
+                }
+
+            # Use 'create' to get a VirtualDataFrame
+            # Convert view name to lowercase and hyphens for the path
+            view_path = view.lower().replace("_", "-")
+
+            vdf = create_dataset(
+                path=f"biocirv/{view_path}",
+                description=f"BioCirv view: {view}",
+                source=source_config
+            )
+            connectors.append(vdf)
+        except Exception as e:
+            print(f"⚠️ Error creating VirtualDataFrame for view {view}: {e}")
+
+    if not connectors:
+        # Fallback to a default view if discovery failed
+        default_table = "analysis_data_view"
+
+        if load_dataset:
             try:
-                # We use the fetch_table_metadata to at least get columns,
-                # ideally we'd have a source for actual descriptions.
-                # For now, we'll label them from documentation if available.
-                column_str = fetch_table_metadata(engine, view)
-                # You could parse column_str to build field_descriptions if needed
+                default_path = default_table.lower().replace("_", "-")
+                dataset_path = f"biocirv/{default_path}"
+                vdf = load_dataset(dataset_path)
+                connectors.append(vdf)
             except Exception:
                 pass
 
-            if db_config.get("cloud_mode"):
-                # For Cloud SQL IAM, we use the engine directly if possible,
-                # but PostgreSQLConnector expects credentials.
-                # PandasAI SQLConnector also supports SQLAlchemy engine directly in recent versions
-                # or we can pass a custom creator/url.
-                connectors.append(PostgreSQLConnector(config={
-                    "username": db_config['db_iam_user'],
+    if not connectors:
+        # Still none? Try creating default
+        default_table = "analysis_data_view" # Ensure it is defined
+        try:
+            source_config = {
+                "type": "postgres",
+                "table": default_table,
+                "connection": {
+                    "host": db_config.get('db_host', 'localhost'),
+                    "port": int(db_config.get('db_port', 5432)),
                     "database": db_config['db_name'],
-                    "table": view,
-                    "driver": "pg8000",
-                    "field_descriptions": field_descriptions,
-                    "use_sqlalchemy": True,
-                    "engine": engine, # Some versions of PandasAI allow passing the engine
-                    "connect_args": {
-                        "options": f"-c search_path={search_path}"
-                    }
-                }))
-            else:
-                connectors.append(PostgreSQLConnector(config={
-                    "username": db_config['db_user'],
-                    "password": db_config['db_pass'],
-                    "host": db_config['db_host'],
-                    "port": db_config['db_port'],
-                    "database": db_config['db_name'],
-                    "table": view,
-                    "where": None,
-                    "field_descriptions": field_descriptions,
-                    "connect_args": {
-                        "options": f"-c search_path={search_path}"
-                    }
-                }))
+                    "user": db_config.get('db_user', db_config.get('db_iam_user')),
+                    "password": db_config.get('db_pass', 'none')
+                }
+            }
+            # Convert to lowercase and hyphens
+            default_path = default_table.lower().replace("_", "-")
 
-        if not connectors:
-            # Fallback if discovery fails but connector is available
-            default_table = "analysis_data_view"
-            if db_config.get("cloud_mode"):
-                connectors.append(PostgreSQLConnector(config={
-                    "username": db_config['db_iam_user'],
-                    "database": db_config['db_name'],
-                    "table": default_table,
-                    "use_sqlalchemy": True,
-                    "engine": engine,
-                    "connect_args": {
-                        "options": f"-c search_path={search_path}"
-                    }
-                }))
-            else:
-                connectors.append(PostgreSQLConnector(config={
-                    "username": db_config['db_user'],
-                    "password": db_config['db_pass'],
-                    "host": db_config['db_host'],
-                    "port": db_config['db_port'],
-                    "database": db_config['db_name'],
-                    "table": default_table,
-                    "where": None,
-                    "connect_args": {
-                        "options": f"-c search_path={search_path}"
-                    }
-                }))
-    else:
-        # Fallback to using the SQLAlchemy engine directly if no connector package is found.
-        # This is less feature-rich (no metadata registry support) but more robust.
-        print("⚠️ Warning: PostgreSQLConnector not found. Falling back to direct SQLAlchemy engine.")
-        connectors = [engine]
+            vdf = create_dataset(
+                path=f"biocirv/{default_path}",
+                description=f"BioCirv default view: {default_table}",
+                source=source_config
+            )
+            connectors.append(vdf)
+        except Exception as e:
+            print(f"⚠️ Error creating default VirtualDataFrame: {e}")
 
     # Configure Agent
+    # In PandasAI 3.0+, Agent expects a list of (Virtual)DataFrames.
     agent = BioCirvAgent(
         connectors,
-        description="A PostgreSQL database containing BioCirv analytics and geospatial views.",
         config={
             "llm": llm,
             "verbose": True,

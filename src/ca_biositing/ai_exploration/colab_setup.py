@@ -33,10 +33,10 @@ def setup_colab():
 
         # 2. Get CBORG API key
         print("🔑 Checking for CBORG API key...")
-        
+
         # Priority 1: Check if it's already in os.environ
         cborg_api_key = os.getenv('CBORG_API_KEY')
-        
+
         # Priority 2: Try GCP Secret Manager (Most secure for VS Code/Headless)
         if not cborg_api_key:
             cborg_api_key = get_secret("CBORG_API_KEY")
@@ -47,7 +47,7 @@ def setup_colab():
         # Priority 3: Try loading .env from multiple possible locations
         project_root = '/content/biocirv-ai'
         search_paths = [os.getcwd(), project_root, '/content']
-        
+
         if not cborg_api_key:
             for path in search_paths:
                 env_path = os.path.join(path, '.env')
