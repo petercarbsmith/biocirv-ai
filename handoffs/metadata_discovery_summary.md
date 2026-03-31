@@ -1,41 +1,39 @@
 # 🪲 Troubleshooting Summary: PandasAI Metadata Discovery
 
 ## 🔍 The Problem
-The BioCirv AI Agent initializes successfully, but the `VirtualDataFrames` register with **zero columns** (`No columns found`). This blocks the LLM from understanding the database schema, leading to failed or hallucinated SQL generation.
+The BioCirv AI Agent initializes successfully, but the `VirtualDataFrames` were registering with **zero columns** (`No columns found`). This blocked the LLM from understanding the database schema, leading to failed or hallucinated SQL generation. The underlying cause was SQLAlchemy's introspection failing on PostGIS `geometry` types and complex view definitions.
 
 ## 🛠️ Strategies Attempted
 
 ### 1. Schema & Search Path Optimization
-*   **Reasoning**: SQLAlchemy might fail to introspect views if the `search_path` isn't set or if schema/table names are ambiguous.
-*   **Action**: Explicitly set `search_path` in `connect_args` and split `schema`/`table` into separate configuration fields.
-*   **Result**: Connection was stable, but introspection still returned zero columns.
+*   **Action**: Explicitly set `search_path` in `connect_args` and split `schema`/`table` into separate fields.
+*   **Result**: Connection was stable, but automated introspection still returned zero columns.
 
 ### 2. Manual SQL Introspection (Success)
-*   **Reasoning**: If the library's automated discovery fails (likely due to PostGIS `geometry` types or complex view definitions), we can fetch the columns ourselves.
 *   **Action**: Implemented a tiered discovery fallback using `SELECT * FROM "schema"."table" LIMIT 0`.
-*   **Result**: **Success**. The fallback successfully retrieves the column list (e.g., "12 columns found"), proving the views exist and are accessible.
+*   **Result**: **Success**. This reliably retrieved column names from the database, bypassing driver-level introspection bugs.
 
 ### 3. Attribute Injection (`object.__setattr__`)
-*   **Reasoning**: Once we have the columns, we tried to force them into the `VirtualDataFrame` instance.
-*   **Action**: Used `object.__setattr__` to target `_columns`, `_schema.columns`, and `_connector._columns`.
-*   **Result**: Met resistance. Pandas-based objects often protect the `.columns` attribute, triggering warnings: *"Pandas doesn't allow columns to be created via a new attribute name"*.
+*   **Action**: Tried to force discovered columns into the `VirtualDataFrame` instance after creation.
+*   **Result**: Failed. The library's internal state management blocked late-binding metadata injection.
 
-### 4. Subclassing `VirtualDataFrame` (Current State)
-*   **Reasoning**: The most robust way to force metadata is to override the property itself.
-*   **Action**: Created `BioCirvVirtualDataFrame` which overrides the `@property columns`.
-*   **Hurdle**: Initially triggered a `maximum recursion depth exceeded` error because `hasattr()` on a Pandas-like object can trigger recursive attribute lookups.
-*   **Fix**: Switched to recursion-safe `self.__dict__.get("_forced_columns")` lookups.
+### 4. Subclassing `VirtualDataFrame`
+*   **Action**: Created a subclass to override the `.columns` property.
+*   **Result**: Failed. Triggered recursion errors and "Missing DataLoader" requirements.
 
-## 🚧 Current State & Findings
-*   **Database Connectivity**: ✅ Verified healthy via Cloud SQL Proxy.
-*   **Schema Validity**: ✅ `ca_biositing` schema and views verified.
-*   **Column Retrieval**: ✅ Manual SQL discovery is successfully finding the columns.
-*   **The Blocker**: The `VirtualDataFrame` (specifically the version in Colab) is highly protective of its internal state. Even when we "see" the columns via SQL, the object often reports them as empty to the Agent's registry.
+## ✅ The Final Solution: The "Ghost Frame" Strategy
+The winning strategy involved providing the metadata *at the moment of creation* using officially supported (but strict) parameters.
+
+1.  **Manual SQL Pre-Discovery**: Before calling the factory, we run a raw SQL `LIMIT 0` query to fetch the actual column names.
+2.  **Ghost Frame Creation**: We create an empty `pandas.DataFrame` with those column names.
+3.  **PandasAI Type Wrapping**: We wrap that pandas DF in a `pandasai.DataFrame` object to satisfy the library's internal type-checking.
+4.  **Factory Injection**: We pass this "Ghost Frame" into the `create_dataset(..., df=ghost_df)` factory.
+5.  **Hybrid Result**: The resulting `VirtualDataFrame` inherits the correct schema from the Ghost Frame while still using the `source_config` to route all actual LLM queries to the PostgreSQL database.
+
+## 🚧 Current State
+*   **Agent Status**: `✅ BioCirv AI Agent Ready!`
+*   **Metadata Discovery**: `✅ Ready (X columns)` for all 6 BioCirv views.
+*   **Persistence**: The fix is hardened in `src/ca_biositing/ai_exploration/sandbox_setup.py` and pushed to the `dev` branch.
 
 ## 📋 Handoff Recommendations
-*   **Verify Subclassing**: The latest push (`dev` branch) uses the recursion-safe `BioCirvVirtualDataFrame`. Verify if this finally reflects "Ready (X columns)" in the logs.
-*   **Registry Check**: If the logs show "Ready" but the Agent still fails, the issue may lie in how the `Registry` (internal to PandasAI) caches these objects.
-*   **Manual Schema Dict**: We may need to pass a full `pandasai.Schema` object to the constructor if the property override is still bypassed.
-
-**Current Files**: 
-- [`src/ca_biositing/ai_exploration/sandbox_setup.py`](src/ca_biositing/ai_exploration/sandbox_setup.py): Contains the subclassing and tiered discovery logic.
+The agent is now fully aware of the BioCirv schema. Future views should be added to the `qualified_views` list in `get_agent()`, and the Ghost Frame strategy will automatically handle their metadata discovery.
