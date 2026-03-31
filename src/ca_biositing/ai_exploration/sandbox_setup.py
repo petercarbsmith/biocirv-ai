@@ -315,7 +315,16 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], schemas: List[str] = ["c
     search_path = ",".join(schemas)
 
     if db_config.get("cloud_mode"):
-        engine = get_cloud_engine(db_config)
+        # When using the Proxy strategy, we can use standard psycopg2 for discovery
+        # if the proxy is running on localhost.
+        # Fallback to get_cloud_engine (Python Connector) if Proxy isn't preferred or available.
+        if db_config.get("db_host") in ["localhost", "127.0.0.1", "0.0.0.0"]:
+             db_url = f"postgresql+psycopg2://{db_config['db_user']}:{db_config['db_pass']}@{db_config['db_host']}:{db_config['db_port']}/{db_config['db_name']}"
+             engine = create_engine(db_url)
+             print("🔌 Connecting to database via Cloud SQL Proxy (Localhost)")
+        else:
+             engine = get_cloud_engine(db_config)
+             print("☁️ Connecting to database via Cloud SQL Python Connector (IAM)")
     else:
         # Create engine for discovery
         db_url = f"postgresql+psycopg2://{db_config['db_user']}:{db_config['db_pass']}@{db_config['db_host']}:{db_config['db_port']}/{db_config['db_name']}"
