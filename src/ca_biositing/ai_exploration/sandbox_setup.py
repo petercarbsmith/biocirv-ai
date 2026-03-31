@@ -433,10 +433,10 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                 source_config["fields"] = manual_columns
 
             # GHOST FRAME STRATEGY:
-            # We create an empty DataFrame with the pre-discovered columns.
-            # Passing this into the VirtualDataFrame constructor ensures it has
-            # the schema in memory while the 'source' dictates the SQL execution.
-            ghost_df = pd.DataFrame(columns=manual_columns) if manual_columns else None
+            # We wrap the empty pandas DataFrame in a PandasAI DataFrame
+            # to satisfy the library's type checking.
+            from pandasai import DataFrame as PA_DataFrame
+            ghost_df = PA_DataFrame(pd.DataFrame(columns=manual_columns)) if manual_columns else None
 
             try:
                 # Use the standard factory but provide the ghost frame as data
