@@ -31,7 +31,14 @@ except ImportError:
         # for semantic layer metadata support.
         PostgreSQLConnector = None
 
-from pandasai.responses.response_parser import ResponseParser
+try:
+    from pandasai.responses.response_parser import ResponseParser
+except ImportError:
+    # Older versions or different structure
+    try:
+        from pandasai.responses import ResponseParser
+    except ImportError:
+        ResponseParser = object
 
 # Internal imports
 from ca_biositing.ai_exploration.schema import discover_views, fetch_table_metadata
@@ -251,10 +258,17 @@ class SandboxResponseParser(ResponseParser):
 class BioCirvAgent(Agent):
     """Subclassed Agent to ensure TrinityResult is returned from chat()."""
     def chat(self, prompt: str, output_type: Optional[str] = None) -> TrinityResult:
-        super().chat(prompt, output_type)
+        # Standard chat call
+        result = super().chat(prompt, output_type)
+
+        # In recent versions, chat() might return the result directly
+        # or it might be stored in the parser.
         if hasattr(self.response_parser, 'get_trinity'):
             return self.response_parser.get_trinity(self)
-        return TrinityResult(code="", answer="Error: Parser mismatch")
+
+        # Fallback manual wrapping if parser isn't cooperative
+        code = getattr(self, "last_code_executed", "")
+        return TrinityResult(code=code, answer=result)
 
 def init_sandbox(model_name: Optional[str] = None, cloud_mode: bool = False):
     """Initializes the sandbox environment and returns the LLM and DB config."""
