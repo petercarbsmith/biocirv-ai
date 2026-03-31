@@ -432,49 +432,55 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                 source_config["columns"] = manual_columns
                 source_config["fields"] = manual_columns
 
-            # Direct VirtualDataFrame instantiation if we have manual columns
-            # to ensure they are baked in from the start.
+            # If we have manual columns, we can create a custom schema object
+            # to bypass the failing internal discovery.
+            custom_schema = None
+            if manual_columns:
+                try:
+                    # In some versions, we can pass schema as a dict or a Schema object
+                    custom_schema = {"columns": manual_columns}
+                    # If pandasai.Schema is available, we could use it, but dict is safer.
+                except Exception:
+                    pass
+
+            # Direct VirtualDataFrame instantiation with all available signals
             try:
+                # We provide columns in source_config AND as a top-level kwarg
                 vdf = VirtualDataFrame(
                     source=source_config,
-                    description=f"BioCirv view: {view}"
+                    description=f"BioCirv view: {view}",
+                    columns=manual_columns, # Some versions accept this
+                    schema=custom_schema   # Others accept this
                 )
-                # If path-based registration is required by the environment (Colab/Registry)
+                
+                # If path-based registration is required by the environment
                 if hasattr(vdf, "save_to_path"):
                     vdf.save_to_path(dataset_path)
             except Exception:
+                # Fallback to standard create_dataset but with the enriched source_config
                 vdf = create_dataset(
                     path=dataset_path,
                     description=f"BioCirv view: {view}",
                     source=source_config
                 )
 
-            # Force columns onto the VDF if they are still missing but we found them.
-            if manual_columns:
-                # Use a more targeted approach to avoid Pandas attribute warnings
-                # We target the specific metadata containers used by PandasAI 3.0+
-                targets = [
-                    (vdf, "columns"),
-                    (vdf, "_columns"),
-                    (vdf, "table_columns"),
-                    (getattr(vdf, "_schema", None), "columns"),
-                    (getattr(vdf, "_source", None), "columns"),
-                    (getattr(vdf, "_connector", None), "columns"),
-                    (getattr(vdf, "_connector", None), "_columns"),
-                ]
-                
-                for obj, attr in targets:
-                    if obj is not None:
-                        val = pd.Index(manual_columns) if attr == "columns" else manual_columns
-                        try:
-                            # Use object.__setattr__ to bypass any class-level protections or property setters
-                            object.__setattr__(obj, attr, val)
-                        except Exception:
-                            # If object level fails, try standard setattr as fallback
-                            try:
-                                setattr(obj, attr, val)
-                            except Exception:
-                                continue
+            # FORCE OVERRIDE: If still empty, we wrap the VDF's columns property
+            # This is a "monkeypatch" of the instance to return the truth.
+            if manual_columns and (not hasattr(vdf, "columns") or len(vdf.columns) == 0):
+                try:
+                    # Direct attribute injection for the lazy ones
+                    object.__setattr__(vdf, "_columns", manual_columns)
+                    object.__setattr__(vdf, "columns", pd.Index(manual_columns))
+                    
+                    # If it's a property, this might fail, so we try the connector
+                    if hasattr(vdf, "_connector") and vdf._connector:
+                        object.__setattr__(vdf._connector, "_columns", manual_columns)
+                        object.__setattr__(vdf._connector, "columns", manual_columns)
+                    
+                    # Last resort: monkeypatch the columns property if possible
+                    # (only works if it's not a read-only compiled property)
+                except Exception:
+                    pass
             
             # Verify columns were fetched
             # Avoid direct truth check on RangeIndex/Index to prevent "ambiguous truth value" error
