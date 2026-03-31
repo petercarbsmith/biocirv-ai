@@ -347,8 +347,9 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
         try:
             # table_name for the dataset (can be the qualified string)
             # path is used by the agent to reference the dataset
-            safe_name = view.replace(".", "_")
-            dataset_path = f"biocirv/{safe_name}/{session_ts}"
+            # IMPORTANT: PandasAI 3.0+ expects 'org/dataset' format.
+            safe_name = view.replace(".", "-")
+            dataset_path = f"biocirv/{safe_name}-{session_ts}"
 
             source_config = {
                 "type": "postgres",
