@@ -340,8 +340,10 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
     # Since the Cloud SQL Proxy is running on localhost:5434, we use the
     # standard psycopg2 engine for discovery regardless of cloud_mode.
     try:
+        # Create a basic engine for introspection without complex options
+        # We rely on explicit schema naming during discovery
         url = f"postgresql+psycopg2://{connection_params['user']}:{connection_params['password']}@{connection_params['host']}:{connection_params['port']}/{connection_params['database']}"
-        engine = create_engine(url, connect_args=connection_params.get("connect_args", {}))
+        engine = create_engine(url)
     except Exception as e:
         print(f"  ⚠️ Failed to initialize introspection engine: {e}")
         engine = None
@@ -383,14 +385,15 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                 try:
                     # 1. Try Primitive SQL Fallback (Most reliable for PostGIS views)
                     # We do this first to avoid SQLAlchemy's type-parsing logic for 'geometry' types.
+                    with engine.connect() as conn:
+                        # Quote names to handle case sensitivity and special chars
+                        # Use a simpler query if needed
+                        query = text(f'SELECT * FROM "{schema_part}"."{table_part}" LIMIT 0')
+                        res = conn.execute(query)
+                        manual_columns = list(res.keys())
+                except Exception as e1:
+                    # 2. Try SQLAlchemy Inspector as backup
                     try:
-                        with engine.connect() as conn:
-                            # Quote names to handle case sensitivity and special chars
-                            query = text(f'SELECT * FROM "{schema_part}"."{table_part}" LIMIT 0')
-                            res = conn.execute(query)
-                            manual_columns = list(res.keys())
-                    except Exception:
-                        # 2. Try SQLAlchemy Inspector as backup
                         from sqlalchemy import inspect
                         inspector = inspect(engine)
                         cols = inspector.get_columns(table_part, schema=schema_part)
@@ -398,8 +401,8 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                             cols = inspector.get_columns(table_part)
                         if cols:
                             manual_columns = [c['name'] for c in cols]
-                except Exception as e:
-                    print(f"  ⚠️ Manual discovery for {view} failed: {type(e).__name__}: {str(e)}")
+                    except Exception as e2:
+                        print(f"  ⚠️ Manual discovery for {view} failed (SQL: {e1}, Inspector: {e2})")
 
             source_config = {
                 "type": "postgres",
