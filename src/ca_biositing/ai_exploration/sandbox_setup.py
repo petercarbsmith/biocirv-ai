@@ -308,148 +308,75 @@ def get_cloud_engine(db_config: Dict[str, Any]):
     )
     return engine
 
-def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], schemas: List[str] = ["ca_biositing", "data_portal"], views: Optional[List[dict]] = None):
-    """Creates a SQL-first PandasAI agent using SQLConnector or SQLAlchemy engine."""
+def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optional[List[str]] = None):
+    """
+    Creates a SQL-first PandasAI agent using an explicit list of qualified views (schema.table).
+    Example: ["ca_biositing.analysis_data_view", "data_portal.usda_census_view"]
+    """
 
-    # Add search_path to connection arguments for PostgreSQL
-    search_path = ",".join(schemas)
-
-    if db_config.get("cloud_mode"):
-        # When using the Proxy strategy, we can use standard psycopg2 for discovery
-        # if the proxy is running on localhost.
-        # Fallback to get_cloud_engine (Python Connector) if Proxy isn't preferred or available.
-        if db_config.get("db_host") in ["localhost", "127.0.0.1", "0.0.0.0"]:
-             import urllib.parse
-             user = urllib.parse.quote_plus(db_config['db_user'])
-             # For IAM Auth through proxy, we often don't need a password if --auto-iam-authn is used,
-             # but SQLAlchemy URL needs a placeholder.
-             db_url = f"postgresql+psycopg2://{user}:{db_config['db_pass']}@{db_config['db_host']}:{db_config['db_port']}/{db_config['db_name']}"
-             
-             # Increase pool recycle and add SSL mode disable (Proxy handles SSL)
-             engine = create_engine(
-                 db_url,
-                 connect_args={
-                     "sslmode": "disable",
-                     "options": f"-c search_path={search_path}"
-                 },
-                 pool_pre_ping=True
-             )
-             print(f"🔌 Connecting to database via Cloud SQL Proxy (Localhost:{db_config['db_port']})")
-        else:
-             engine = get_cloud_engine(db_config)
-             print("☁️ Connecting to database via Cloud SQL Python Connector (IAM)")
-    else:
-        # Create engine for discovery
-        db_url = f"postgresql+psycopg2://{db_config['db_user']}:{db_config['db_pass']}@{db_config['db_host']}:{db_config['db_port']}/{db_config['db_name']}"
-        engine = create_engine(
-            db_url,
-            connect_args={"options": f"-c search_path={search_path}"}
-        )
-    
-    try:
-        if views is None:
-            views = discover_views(engine, schemas)
-    except Exception as e:
-        print(f"⚠️ Warning: View discovery failed: {e}")
-        views = [{"schema": schemas[0], "table": "analysis_data_view"}] # Fallback
-
-    # Configure connectors using the new Semantic Layer API (PandasAI 3.0+)
-    connectors = []
-
-    # Import load/create once
-    try:
-        from pandasai import load as load_func
-        load_dataset = load_func
-    except ImportError:
-        load_dataset = None
-
-    # Common connection params to ensure compatibility
+    # 1. Standardize Connection Config (The Singleton)
+    # CRITICAL: This MUST be bit-for-bit identical for every VirtualDataFrame.
     connection_params = {
-        "host": db_config.get('db_host', '127.0.0.1'),
+        "host": str(db_config.get('db_host', '127.0.0.1')),
         "port": int(db_config.get('db_port', 5434)),
-        "database": db_config['db_name'],
-        "user": db_config['db_user'],
-        "password": db_config['db_pass']
+        "database": str(db_config['db_name']),
+        "user": str(db_config['db_user']),
+        "password": str(db_config['db_pass'])
     }
 
-    # Phase 2: Create Virtual DataFrames
-    for view_info in views:
-        schema = view_info["schema"]
-        table = view_info["table"]
+    # 2. Use default views if none provided
+    if not qualified_views:
+        qualified_views = [
+            "ca_biositing.analysis_data_view",
+            "ca_biositing.analysis_average_view",
+            "ca_biositing.billion_ton_tileset_view",
+            "ca_biositing.landiq_record_view",
+            "data_portal.usda_census_view",
+            "data_portal.usda_survey_view"
+        ]
+
+    connectors = []
+    
+    # Generate a session-specific timestamp to avoid stale registry hits in Colab
+    import time
+    session_ts = int(time.time())
+
+    print(f"📦 Registering {len(qualified_views)} virtual datasets...")
+
+    for view in qualified_views:
         try:
-            # Check if dataset already exists to avoid ValueError
-            view_path = table.lower().replace("_", "-")
-            dataset_path = f"biocirv/{view_path}"
+            # table_name for the dataset (can be the qualified string)
+            # path is used by the agent to reference the dataset
+            safe_name = view.replace(".", "_")
+            dataset_path = f"biocirv/{safe_name}/{session_ts}"
 
-            if load_dataset:
-                try:
-                    vdf = load_dataset(dataset_path)
-                    connectors.append(vdf)
-                    continue
-                except Exception:
-                    # If load fails, we proceed to create
-                    pass
-
-            # In PandasAI 3.0+, we use 'create' to define a VirtualDataFrame
-            # and provide a 'source' dictionary.
             source_config = {
                 "type": "postgres",
-                "table": table,
-                "schema": schema, # Explicitly include schema
-                "connection": connection_params # Identical connection dict
-            }
-
-            # Use 'create' to get a VirtualDataFrame
-            vdf = create_dataset(
-                path=dataset_path,
-                description=f"BioCirv view: {schema}.{table}",
-                source=source_config
-            )
-            connectors.append(vdf)
-        except Exception as e:
-            print(f"⚠️ Error creating VirtualDataFrame for view {table}: {e}")
-
-    if not connectors:
-        # Fallback to a default view if discovery failed
-        default_table = "analysis_data_view"
-        default_schema = schemas[0] if schemas else "ca_biositing"
-
-        if load_dataset:
-            try:
-                default_path = default_table.lower().replace("_", "-")
-                dataset_path = f"biocirv/{default_path}"
-                vdf = load_dataset(dataset_path)
-                connectors.append(vdf)
-            except Exception:
-                pass
-
-    if not connectors:
-        # Ensure default_table is defined if previous block was skipped
-        default_table = "analysis_data_view"
-        default_schema = schemas[0] if schemas else "ca_biositing"
-        
-        # Still none? Try creating default
-        try:
-            source_config = {
-                "type": "postgres",
-                "table": default_table,
-                "schema": default_schema,
+                "table": view,  # schema.table syntax
                 "connection": connection_params
             }
-            # Convert to lowercase and hyphens
-            default_path = default_table.lower().replace("_", "-")
 
             vdf = create_dataset(
-                path=f"biocirv/{default_path}",
-                description=f"BioCirv default view: {default_schema}.{default_table}",
+                path=dataset_path,
+                description=f"BioCirv view: {view}",
                 source=source_config
             )
+            
+            # Verify columns were fetched
+            cols = getattr(vdf, "columns", [])
+            if not cols:
+                print(f"  ⚠️ {view}: No columns found. Check connectivity or view existence.")
+            else:
+                print(f"  ✅ {view}: Ready ({len(cols)} columns)")
+
             connectors.append(vdf)
         except Exception as e:
-            print(f"⚠️ Error creating default VirtualDataFrame: {e}")
+            print(f"  ❌ Error registering {view}: {e}")
 
-    # Configure Agent
-    # In PandasAI 3.0+, Agent expects a list of (Virtual)DataFrames.
+    if not connectors:
+        raise RuntimeError("Failed to register any VirtualDataFrames. Agent cannot start.")
+
+    # 3. Configure Agent
     agent = BioCirvAgent(
         connectors,
         config={
@@ -463,9 +390,5 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], schemas: List[str] = ["c
             "save_charts_path": "exports/charts",
         }
     )
-
-    # Ensure search_path is set for the connection if possible via engine/connector
-    # For PostgreSQL, we can often pass it in connection arguments or execute it
-    # SQLConnector uses sqlalchemy under the hood.
 
     return agent
