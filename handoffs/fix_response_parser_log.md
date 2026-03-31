@@ -35,3 +35,7 @@ This document tracks the changes and investigation for the `AttributeError: 'Bio
 ### Progress - Update 5 (New Handoff Document)
 - Created [`handoffs/data_validation_troubleshooting.md`](handoffs/data_validation_troubleshooting.md) to diagnose why the agent isn't finding data, even though it discovers columns.
 - Pointed to `search_path` and `ispopulated` as potential culprits.
+
+### Progress - Update 6 (AI Agent Orientation)
+- Created [`AGENTS.md`](../AGENTS.md) in the root of the submodule to provide context and orientation for future AI assistants.
+- Explicitly detailed the Google Colab environment (VS Code extension, Python 3.11 kernel) and designated `biocirv_ai_analysis_playground.ipynb` as the primary testing ground.
