@@ -405,8 +405,10 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
 
             # If we found columns manually, inject them into the source config
             # This 'forced' injection bypasses the failing SQLAlchemy introspection inside PandasAI.
+            # We use both 'columns' and 'fields' to satisfy different internal schema requirements.
             if manual_columns:
                 source_config["columns"] = manual_columns
+                source_config["fields"] = manual_columns
 
             vdf = create_dataset(
                 path=dataset_path,
@@ -414,9 +416,14 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                 source=source_config
             )
 
-            # Force columns onto the VDF if they are still missing but we found them
-            if (not hasattr(vdf, "columns") or len(vdf.columns) == 0) and manual_columns:
+            # Force columns onto the VDF if they are still missing but we found them.
+            # This ensures the Agent sees the metadata even if create_dataset didn't bind it.
+            if manual_columns:
+                # Direct attribute assignment
                 vdf.columns = manual_columns
+                # Some internal PandasAI components check _columns or schema
+                if hasattr(vdf, "_columns"):
+                    vdf._columns = manual_columns
             
             # Verify columns were fetched
             # Avoid direct truth check on RangeIndex/Index to prevent "ambiguous truth value" error
