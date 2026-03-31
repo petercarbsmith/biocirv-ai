@@ -365,8 +365,9 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             )
             
             # Verify columns were fetched
+            # Avoid direct truth check on RangeIndex/Index to prevent "ambiguous truth value" error
             cols = getattr(vdf, "columns", [])
-            if not cols:
+            if cols is None or len(cols) == 0:
                 print(f"  ⚠️ {view}: No columns found. Check connectivity or view existence.")
             else:
                 print(f"  ✅ {view}: Ready ({len(cols)} columns)")
