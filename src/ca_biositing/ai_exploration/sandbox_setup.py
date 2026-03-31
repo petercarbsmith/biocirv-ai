@@ -270,9 +270,9 @@ def init_sandbox(model_name: Optional[str] = None, cloud_mode: bool = False):
     llm = CBORGLLM(api_token=api_key, api_base=api_url, model=selected_model)
 
     config = {
-        "db_user": os.getenv("DB_USER", "biocirv_user"),
-        "db_pass": os.getenv("DB_PASSWORD", "biocirv_dev_password"),
-        "db_host": os.getenv("DB_HOST", "localhost"),
+        "db_user": os.getenv("DB_USER", os.getenv("DB_IAM_USER", "biocirv_user")),
+        "db_pass": os.getenv("DB_PASSWORD", os.getenv("DB_PASS", "biocirv_dev_password")),
+        "db_host": os.getenv("DB_HOST", "127.0.0.1"),
         "db_port": os.getenv("DB_PORT", "5432"),
         "db_name": os.getenv("DB_NAME", "biocirv_db"),
         "cloud_mode": cloud_mode or os.getenv("CLOUD_MODE", "false").lower() == "true",
@@ -339,8 +339,13 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], schemas: List[str] = ["c
         # Create engine for discovery
         db_url = f"postgresql+psycopg2://{db_config['db_user']}:{db_config['db_pass']}@{db_config['db_host']}:{db_config['db_port']}/{db_config['db_name']}"
         engine = create_engine(db_url)
-    if view_names is None:
-        view_names = discover_views(engine, schemas)
+    
+    try:
+        if view_names is None:
+            view_names = discover_views(engine, schemas)
+    except Exception as e:
+        print(f"⚠️ Warning: View discovery failed: {e}")
+        view_names = ["analysis_data_view"] # Fallback to a safe guess
 
     # Configure connectors using the new Semantic Layer API (PandasAI 3.0+)
     connectors = []
