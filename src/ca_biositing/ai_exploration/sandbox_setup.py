@@ -337,16 +337,11 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
     }
 
     # 1b. Create a shared SQLAlchemy engine for "Manual Injection" fallback
-    # This engine will be used to fetch metadata directly if PandasAI's
-    # internal introspection fails.
+    # Since the Cloud SQL Proxy is running on localhost:5434, we use the
+    # standard psycopg2 engine for discovery regardless of cloud_mode.
     try:
-        # If in Cloud Mode, we use the specialized cloud engine
-        if db_config.get("cloud_mode"):
-            engine = get_cloud_engine(db_config)
-        else:
-            # We prefer psycopg2 for standard introspection queries
-            url = f"postgresql+psycopg2://{connection_params['user']}:{connection_params['password']}@{connection_params['host']}:{connection_params['port']}/{connection_params['database']}"
-            engine = create_engine(url, connect_args=connection_params["connect_args"])
+        url = f"postgresql+psycopg2://{connection_params['user']}:{connection_params['password']}@{connection_params['host']}:{connection_params['port']}/{connection_params['database']}"
+        engine = create_engine(url, connect_args=connection_params.get("connect_args", {}))
     except Exception as e:
         print(f"  ⚠️ Failed to initialize introspection engine: {e}")
         engine = None
@@ -386,26 +381,24 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             manual_columns = []
             if engine:
                 try:
-                    # 1. Try SQLAlchemy Inspector
-                    from sqlalchemy import inspect
-                    inspector = inspect(engine)
-                    # Try with explicit schema
-                    cols = inspector.get_columns(table_part, schema=schema_part)
-                    if not cols:
-                        # Try without schema (relying on search_path)
-                        cols = inspector.get_columns(table_part)
-                    
-                    if cols:
-                        manual_columns = [c['name'] for c in cols]
-                    else:
-                        # 2. Try Primitive SQL Fallback (useful for PostGIS/Views that fail introspection)
+                    # 1. Try Primitive SQL Fallback (Most reliable for PostGIS views)
+                    # We do this first to avoid SQLAlchemy's type-parsing logic for 'geometry' types.
+                    try:
                         with engine.connect() as conn:
                             # Quote names to handle case sensitivity and special chars
                             query = text(f'SELECT * FROM "{schema_part}"."{table_part}" LIMIT 0')
                             res = conn.execute(query)
                             manual_columns = list(res.keys())
+                    except Exception:
+                        # 2. Try SQLAlchemy Inspector as backup
+                        from sqlalchemy import inspect
+                        inspector = inspect(engine)
+                        cols = inspector.get_columns(table_part, schema=schema_part)
+                        if not cols:
+                            cols = inspector.get_columns(table_part)
+                        if cols:
+                            manual_columns = [c['name'] for c in cols]
                 except Exception as e:
-                    # Log more detail to understand why Tier 2 is failing
                     print(f"  ⚠️ Manual discovery for {view} failed: {type(e).__name__}: {str(e)}")
 
             source_config = {
