@@ -340,10 +340,15 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
     # This engine will be used to fetch metadata directly if PandasAI's
     # internal introspection fails.
     try:
-        # We prefer psycopg2 for standard introspection queries
-        url = f"postgresql+psycopg2://{connection_params['user']}:{connection_params['password']}@{connection_params['host']}:{connection_params['port']}/{connection_params['database']}"
-        engine = create_engine(url, connect_args=connection_params["connect_args"])
-    except Exception:
+        # If in Cloud Mode, we use the specialized cloud engine
+        if db_config.get("cloud_mode"):
+            engine = get_cloud_engine(db_config)
+        else:
+            # We prefer psycopg2 for standard introspection queries
+            url = f"postgresql+psycopg2://{connection_params['user']}:{connection_params['password']}@{connection_params['host']}:{connection_params['port']}/{connection_params['database']}"
+            engine = create_engine(url, connect_args=connection_params["connect_args"])
+    except Exception as e:
+        print(f"  ⚠️ Failed to initialize introspection engine: {e}")
         engine = None
 
     # 2. Use default views if none provided
@@ -353,8 +358,8 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             "ca_biositing.analysis_average_view",
             "ca_biositing.billion_ton_tileset_view",
             "ca_biositing.landiq_record_view",
-            "data_portal.usda_census_view",
-            "data_portal.usda_survey_view"
+            "ca_biositing.usda_census_view",
+            "ca_biositing.usda_survey_view"
         ]
 
     connectors = []
@@ -400,7 +405,8 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                             res = conn.execute(query)
                             manual_columns = list(res.keys())
                 except Exception as e:
-                    print(f"  ⚠️ Manual discovery for {view} failed: {e}")
+                    # Log more detail to understand why Tier 2 is failing
+                    print(f"  ⚠️ Manual discovery for {view} failed: {type(e).__name__}: {str(e)}")
 
             source_config = {
                 "type": "postgres",
