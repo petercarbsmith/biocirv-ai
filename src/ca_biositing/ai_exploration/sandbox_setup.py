@@ -243,6 +243,33 @@ class SandboxResponseParser(ResponseParser):
             answer=answer
         )
 
+class BioCirvVirtualDataFrame(VirtualDataFrame):
+    """
+    Hardened VirtualDataFrame that allows manual column injection
+    to bypass failing internal discovery.
+    """
+    def __init__(self, *args, **kwargs):
+        self._forced_columns = kwargs.pop("forced_columns", None)
+        super().__init__(*args, **kwargs)
+        if self._forced_columns:
+            object.__setattr__(self, "_columns", self._forced_columns)
+
+    @property
+    def columns(self):
+        if hasattr(self, "_forced_columns") and self._forced_columns:
+            import pandas as pd
+            return pd.Index(self._forced_columns)
+        try:
+            return super().columns
+        except Exception:
+            return pd.Index([])
+
+    @property
+    def columns_count(self):
+        if hasattr(self, "_forced_columns") and self._forced_columns:
+            return len(self._forced_columns)
+        return super().columns_count
+
 class BioCirvAgent(Agent):
     """Subclassed Agent to ensure TrinityResult is returned from chat()."""
     def chat(self, prompt: str, output_type: Optional[str] = None) -> TrinityResult:
@@ -432,55 +459,28 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                 source_config["columns"] = manual_columns
                 source_config["fields"] = manual_columns
 
-            # If we have manual columns, we can create a custom schema object
-            # to bypass the failing internal discovery.
-            custom_schema = None
-            if manual_columns:
-                try:
-                    # In some versions, we can pass schema as a dict or a Schema object
-                    custom_schema = {"columns": manual_columns}
-                    # If pandasai.Schema is available, we could use it, but dict is safer.
-                except Exception:
-                    pass
-
-            # Direct VirtualDataFrame instantiation with all available signals
+            # Use our hardened BioCirvVirtualDataFrame to ensure manual columns
+            # are respected regardless of internal discovery failures.
             try:
-                # We provide columns in source_config AND as a top-level kwarg
-                vdf = VirtualDataFrame(
+                vdf = BioCirvVirtualDataFrame(
                     source=source_config,
                     description=f"BioCirv view: {view}",
-                    columns=manual_columns, # Some versions accept this
-                    schema=custom_schema   # Others accept this
+                    forced_columns=manual_columns
                 )
-                
                 # If path-based registration is required by the environment
                 if hasattr(vdf, "save_to_path"):
-                    vdf.save_to_path(dataset_path)
-            except Exception:
-                # Fallback to standard create_dataset but with the enriched source_config
+                    try:
+                        vdf.save_to_path(dataset_path)
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"    ⚠️ BioCirvVirtualDataFrame instantiation failed: {e}")
+                # Ultimate fallback to standard create_dataset
                 vdf = create_dataset(
                     path=dataset_path,
                     description=f"BioCirv view: {view}",
                     source=source_config
                 )
-
-            # FORCE OVERRIDE: If still empty, we wrap the VDF's columns property
-            # This is a "monkeypatch" of the instance to return the truth.
-            if manual_columns and (not hasattr(vdf, "columns") or len(vdf.columns) == 0):
-                try:
-                    # Direct attribute injection for the lazy ones
-                    object.__setattr__(vdf, "_columns", manual_columns)
-                    object.__setattr__(vdf, "columns", pd.Index(manual_columns))
-                    
-                    # If it's a property, this might fail, so we try the connector
-                    if hasattr(vdf, "_connector") and vdf._connector:
-                        object.__setattr__(vdf._connector, "_columns", manual_columns)
-                        object.__setattr__(vdf._connector, "columns", manual_columns)
-                    
-                    # Last resort: monkeypatch the columns property if possible
-                    # (only works if it's not a read-only compiled property)
-                except Exception:
-                    pass
             
             # Verify columns were fetched
             # Avoid direct truth check on RangeIndex/Index to prevent "ambiguous truth value" error
