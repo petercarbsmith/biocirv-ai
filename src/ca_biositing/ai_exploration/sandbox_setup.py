@@ -381,6 +381,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             manual_columns = []
             if engine:
                 try:
+                    # 1. Try SQLAlchemy Inspector
                     from sqlalchemy import inspect
                     inspector = inspect(engine)
                     # Try with explicit schema
@@ -391,6 +392,13 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                     
                     if cols:
                         manual_columns = [c['name'] for c in cols]
+                    else:
+                        # 2. Try Primitive SQL Fallback (useful for PostGIS/Views that fail introspection)
+                        with engine.connect() as conn:
+                            # Quote names to handle case sensitivity and special chars
+                            query = text(f'SELECT * FROM "{schema_part}"."{table_part}" LIMIT 0')
+                            res = conn.execute(query)
+                            manual_columns = list(res.keys())
                 except Exception as e:
                     print(f"  ⚠️ Manual discovery for {view} failed: {e}")
 
@@ -417,13 +425,18 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             )
 
             # Force columns onto the VDF if they are still missing but we found them.
-            # This ensures the Agent sees the metadata even if create_dataset didn't bind it.
+            # We wrap this in a try-except to avoid "Length mismatch" errors in some versions
+            # of Pandas/PandasAI that validate .columns assignment length.
             if manual_columns:
-                # Direct attribute assignment
-                vdf.columns = manual_columns
-                # Some internal PandasAI components check _columns or schema
-                if hasattr(vdf, "_columns"):
-                    vdf._columns = manual_columns
+                try:
+                    vdf.columns = manual_columns
+                except Exception:
+                    # If direct assignment fails, try internal attribute bypass
+                    if hasattr(vdf, "_columns"):
+                        try:
+                            vdf._columns = manual_columns
+                        except Exception:
+                            pass
             
             # Verify columns were fetched
             # Avoid direct truth check on RangeIndex/Index to prevent "ambiguous truth value" error
