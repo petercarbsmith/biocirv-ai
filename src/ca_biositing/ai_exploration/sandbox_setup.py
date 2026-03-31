@@ -319,8 +319,18 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], schemas: List[str] = ["c
         # if the proxy is running on localhost.
         # Fallback to get_cloud_engine (Python Connector) if Proxy isn't preferred or available.
         if db_config.get("db_host") in ["localhost", "127.0.0.1", "0.0.0.0"]:
-             db_url = f"postgresql+psycopg2://{db_config['db_user']}:{db_config['db_pass']}@{db_config['db_host']}:{db_config['db_port']}/{db_config['db_name']}"
-             engine = create_engine(db_url)
+             import urllib.parse
+             user = urllib.parse.quote_plus(db_config['db_user'])
+             # For IAM Auth through proxy, we often don't need a password if --auto-iam-auth is used,
+             # but SQLAlchemy URL needs a placeholder.
+             db_url = f"postgresql+psycopg2://{user}:{db_config['db_pass']}@{db_config['db_host']}:{db_config['db_port']}/{db_config['db_name']}"
+             
+             # Increase pool recycle and add SSL mode disable (Proxy handles SSL)
+             engine = create_engine(
+                 db_url,
+                 connect_args={"sslmode": "disable"},
+                 pool_pre_ping=True
+             )
              print("🔌 Connecting to database via Cloud SQL Proxy (Localhost)")
         else:
              engine = get_cloud_engine(db_config)
