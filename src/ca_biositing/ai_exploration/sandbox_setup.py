@@ -344,6 +344,16 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
         # We rely on explicit schema naming during discovery
         url = f"postgresql+psycopg2://{connection_params['user']}:{connection_params['password']}@{connection_params['host']}:{connection_params['port']}/{connection_params['database']}"
         engine = create_engine(url)
+        
+        # Test the engine immediately
+        with engine.connect() as conn:
+            print(f"  🔗 Introspection engine connected to {connection_params['database']}")
+            # Check schema existence
+            res = conn.execute(text("SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'ca_biositing'"))
+            if not res.fetchone():
+                print("  ❌ WARNING: schema 'ca_biositing' not found in database!")
+            else:
+                print("  ✅ Schema 'ca_biositing' verified.")
     except Exception as e:
         print(f"  ⚠️ Failed to initialize introspection engine: {e}")
         engine = None
@@ -390,7 +400,9 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                         # Use a simpler query if needed
                         query = text(f'SELECT * FROM "{schema_part}"."{table_part}" LIMIT 0')
                         res = conn.execute(query)
-                        manual_columns = list(res.keys())
+                        manual_columns = [col for col in res.keys()]
+                        if manual_columns:
+                            print(f"    🔍 Manual SQL discovery success: {len(manual_columns)} columns")
                 except Exception as e1:
                     # 2. Try SQLAlchemy Inspector as backup
                     try:
