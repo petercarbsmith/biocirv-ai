@@ -439,18 +439,24 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             )
 
             # Force columns onto the VDF if they are still missing but we found them.
-            # We wrap this in a try-except to avoid "Length mismatch" errors in some versions
-            # of Pandas/PandasAI that validate .columns assignment length.
             if manual_columns:
                 try:
-                    vdf.columns = manual_columns
+                    # Try to set via pandas Index
+                    vdf.columns = pd.Index(manual_columns)
                 except Exception:
-                    # If direct assignment fails, try internal attribute bypass
-                    if hasattr(vdf, "_columns"):
+                    # Fallback to internal attributes
+                    for attr in ["_columns", "columns"]:
                         try:
-                            vdf._columns = manual_columns
+                            setattr(vdf, attr, manual_columns)
                         except Exception:
                             pass
+                
+                # In some versions of PandasAI, VirtualDataFrame uses a schema object
+                if hasattr(vdf, "_schema") and vdf._schema is not None:
+                    try:
+                        vdf._schema.columns = manual_columns
+                    except Exception:
+                        pass
             
             # Verify columns were fetched
             # Avoid direct truth check on RangeIndex/Index to prevent "ambiguous truth value" error
