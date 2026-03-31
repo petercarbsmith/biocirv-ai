@@ -371,17 +371,18 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], schemas: List[str] = ["c
             # In PandasAI 3.0+, we use 'create' to define a VirtualDataFrame
             # and provide a 'source' dictionary.
             if db_config.get("cloud_mode"):
-                # For Cloud SQL IAM, we must provide the connection details.
-                # Note: We rely on pandasai_sql for the actual execution.
+                # Hybrid Authentication Strategy:
+                # 1. Cloud SQL Proxy handles the secure tunnel (IAM).
+                # 2. Application logs in with traditional username/password (Static).
                 source_config = {
                     "type": "postgres",
                     "table": view,
                     "connection": {
-                        "host": db_config.get('db_host', 'localhost'), # Placeholder, will be ignored by engine
+                        "host": db_config.get('db_host', '127.0.0.1'),
                         "port": int(db_config.get('db_port', 5432)),
                         "database": db_config['db_name'],
-                        "user": db_config['db_iam_user'],
-                        "password": "none" # IAM Auth doesn't use a static password
+                        "user": db_config['db_user'],
+                        "password": db_config['db_pass']
                     }
                 }
             else:
