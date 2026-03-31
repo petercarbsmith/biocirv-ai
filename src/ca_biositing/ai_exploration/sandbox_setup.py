@@ -348,7 +348,8 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             # table_name for the dataset (can be the qualified string)
             # path is used by the agent to reference the dataset
             # IMPORTANT: PandasAI 3.0+ expects 'org/dataset' format.
-            safe_name = view.replace(".", "-")
+            # It also requires lowercase and hyphens (no underscores).
+            safe_name = view.replace(".", "-").replace("_", "-").lower()
             dataset_path = f"biocirv/{safe_name}-{session_ts}"
 
             source_config = {
