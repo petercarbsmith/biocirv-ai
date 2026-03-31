@@ -243,41 +243,6 @@ class SandboxResponseParser(ResponseParser):
             answer=answer
         )
 
-class BioCirvVirtualDataFrame(VirtualDataFrame):
-    """
-    Hardened VirtualDataFrame that allows manual column injection
-    to bypass failing internal discovery. Uses recursion-safe lookups.
-    """
-    def __init__(self, *args, **kwargs):
-        # Capture forced columns before super().__init__
-        forced = kwargs.pop("forced_columns", None)
-        super().__init__(*args, **kwargs)
-        # Use object.__setattr__ to avoid triggering pandas/vdf attribute logic
-        object.__setattr__(self, "_forced_columns", forced)
-        if forced:
-            object.__setattr__(self, "_columns", forced)
-
-    @property
-    def columns(self):
-        # Use __dict__.get to avoid recursion with __getattr__
-        forced = self.__dict__.get("_forced_columns")
-        if forced:
-            return pd.Index(forced)
-        try:
-            return super().columns
-        except Exception:
-            return pd.Index([])
-
-    @property
-    def columns_count(self):
-        forced = self.__dict__.get("_forced_columns")
-        if forced:
-            return len(forced)
-        try:
-            return super().columns_count
-        except Exception:
-            return 0
-
 class BioCirvAgent(Agent):
     """Subclassed Agent to ensure TrinityResult is returned from chat()."""
     def chat(self, prompt: str, output_type: Optional[str] = None) -> TrinityResult:
@@ -467,28 +432,45 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                 source_config["columns"] = manual_columns
                 source_config["fields"] = manual_columns
 
-            # Use our hardened BioCirvVirtualDataFrame to ensure manual columns
-            # are respected regardless of internal discovery failures.
+            # GHOST FRAME STRATEGY:
+            # We create an empty DataFrame with the pre-discovered columns.
+            # Passing this into the VirtualDataFrame constructor ensures it has
+            # the schema in memory while the 'source' dictates the SQL execution.
+            ghost_df = pd.DataFrame(columns=manual_columns) if manual_columns else None
+
             try:
-                vdf = BioCirvVirtualDataFrame(
-                    source=source_config,
-                    description=f"BioCirv view: {view}",
-                    forced_columns=manual_columns
-                )
-                # If path-based registration is required by the environment
-                if hasattr(vdf, "save_to_path"):
-                    try:
-                        vdf.save_to_path(dataset_path)
-                    except Exception:
-                        pass
-            except Exception as e:
-                print(f"    ⚠️ BioCirvVirtualDataFrame instantiation failed: {e}")
-                # Ultimate fallback to standard create_dataset
+                # Use the standard factory but provide the ghost frame as data
                 vdf = create_dataset(
                     path=dataset_path,
                     description=f"BioCirv view: {view}",
-                    source=source_config
+                    source=source_config,
+                    df=ghost_df # Inject discovered metadata via Ghost Frame
                 )
+            except Exception as e:
+                print(f"    ⚠️ create_dataset failed: {e}")
+                # Fallback to direct constructor if factory fails
+                vdf = VirtualDataFrame(
+                    source=source_config,
+                    description=f"BioCirv view: {view}",
+                    df=ghost_df
+                )
+
+            # Final forced injection into the specific internal containers we found in DIR logs
+            if manual_columns:
+                targets = [
+                    (vdf, "_columns"),
+                    (vdf, "columns"),
+                    (getattr(vdf, "_connector", None), "columns"),
+                    (getattr(vdf, "_connector", None), "_columns")
+                ]
+                for obj, attr in targets:
+                    if obj is not None:
+                        try:
+                            # Use Index for 'columns', list for others
+                            val = pd.Index(manual_columns) if attr == "columns" else manual_columns
+                            object.__setattr__(obj, attr, val)
+                        except Exception:
+                            continue
             
             # Verify columns were fetched
             # Avoid direct truth check on RangeIndex/Index to prevent "ambiguous truth value" error
