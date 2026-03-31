@@ -321,13 +321,14 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
     all_schemas = list(set([v.split(".")[0] for v in qualified_views] if qualified_views else ["ca_biositing", "data_portal"]))
     search_path = ",".join(all_schemas)
 
+    # Use standard SQLAlchemy URL string for the connector's internal engine
+    import urllib.parse
+    db_user_quoted = urllib.parse.quote_plus(db_config['db_user'])
+    db_pass_quoted = urllib.parse.quote_plus(db_config['db_pass'])
+    sqlalchemy_url = f"postgresql+psycopg2://{db_user_quoted}:{db_pass_quoted}@{db_config['db_host']}:{db_config['db_port']}/{db_config['db_name']}?options=-csearch_path={search_path}"
+
     connection_params = {
-        "host": str(db_config.get('db_host', '127.0.0.1')),
-        "port": int(db_config.get('db_port', 5434)),
-        "database": str(db_config['db_name']),
-        "user": str(db_config['db_user']),
-        "password": str(db_config['db_pass']),
-        "options": f"-c search_path={search_path}"
+        "url": sqlalchemy_url
     }
 
     # 2. Use default views if none provided
