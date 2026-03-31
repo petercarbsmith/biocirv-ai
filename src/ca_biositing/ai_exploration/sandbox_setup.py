@@ -214,8 +214,23 @@ class SandboxResponseParser(ResponseParser):
 
         result = self._last_result or LAST_RESULT_CACHE.get("result")
 
-        # Visualization Unwrapping Logic
-        if isinstance(result, dict):
+        # Support for PandasAI 3.0+ Response objects
+        if hasattr(result, "value"):
+            val = result.value
+            # Determine type from object class or attributes if possible
+            cls_name = result.__class__.__name__
+            if "DataFrame" in cls_name or isinstance(val, pd.DataFrame):
+                data = val
+            elif "Chart" in cls_name or "Plot" in cls_name:
+                plot = val
+            else:
+                answer = val
+            
+            if hasattr(result, "last_code_executed") and result.last_code_executed:
+                code = result.last_code_executed
+
+        # Visualization Unwrapping Logic (for dict results or raw results)
+        elif isinstance(result, dict):
             res_type = result.get("type")
             res_value = result.get("value")
             if res_type == "dataframe":
@@ -225,7 +240,7 @@ class SandboxResponseParser(ResponseParser):
                 # If it's a path to a file, try to load it as an Image for convenience
                 if isinstance(plot, str) and os.path.exists(plot):
                     plot = Image(filename=plot)
-            elif res_type == "string":
+            elif res_type == "string" or res_type == "number":
                 answer = res_value
         elif isinstance(result, pd.DataFrame):
             data = result
@@ -249,14 +264,41 @@ class BioCirvAgent(Agent):
         # Standard chat call
         result = super().chat(prompt, output_type)
 
-        # In recent versions, chat() might return the result directly
-        # or it might be stored in the parser.
-        if hasattr(self.response_parser, 'get_trinity'):
-            return self.response_parser.get_trinity(self)
+        # In PandasAI 3.0+, response_parser is often in self.context.response_parser
+        # or self.config.response_parser. We check all locations defensively.
+        parser = getattr(self, "response_parser", None)
+        if parser is None and hasattr(self, "context"):
+            parser = getattr(self.context, "response_parser", None)
+        if parser is None and hasattr(self, "config"):
+            # In some versions, it's a dict, in others an object
+            config = self.config
+            if isinstance(config, dict):
+                parser = config.get("response_parser")
+            else:
+                parser = getattr(config, "response_parser", None)
 
-        # Fallback manual wrapping if parser isn't cooperative
+        if parser and hasattr(parser, 'get_trinity'):
+            return parser.get_trinity(self)
+
+        # Fallback manual wrapping if parser isn't cooperative or accessible
+        # We try to see if 'result' itself carries the trinity info (PandasAI 3.0 Response objects)
         code = getattr(self, "last_code_executed", "")
-        return TrinityResult(code=code, answer=result)
+        data = None
+        plot = None
+        answer = result
+
+        if hasattr(result, "value"):
+            answer = result.value
+            if hasattr(result, "last_code_executed"):
+                code = result.last_code_executed
+            
+            cls_name = result.__class__.__name__
+            if "DataFrame" in cls_name:
+                data = result.value
+            elif "Chart" in cls_name:
+                plot = result.value
+
+        return TrinityResult(code=code, data=data, plot=plot, answer=answer)
 
 def init_sandbox(model_name: Optional[str] = None, cloud_mode: bool = False):
     """Initializes the sandbox environment and returns the LLM and DB config."""
