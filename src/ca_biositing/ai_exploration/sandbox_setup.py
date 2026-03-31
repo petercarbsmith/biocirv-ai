@@ -459,16 +459,22 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                     (vdf, "table_columns"),
                     (getattr(vdf, "_schema", None), "columns"),
                     (getattr(vdf, "_source", None), "columns"),
+                    (getattr(vdf, "_connector", None), "columns"),
+                    (getattr(vdf, "_connector", None), "_columns"),
                 ]
                 
                 for obj, attr in targets:
-                    if obj is not None and hasattr(obj, attr):
+                    if obj is not None:
+                        val = pd.Index(manual_columns) if attr == "columns" else manual_columns
                         try:
-                            # Try setting as Index then list
-                            val = pd.Index(manual_columns) if attr == "columns" else manual_columns
-                            setattr(obj, attr, val)
+                            # Use object.__setattr__ to bypass any class-level protections or property setters
+                            object.__setattr__(obj, attr, val)
                         except Exception:
-                            continue
+                            # If object level fails, try standard setattr as fallback
+                            try:
+                                setattr(obj, attr, val)
+                            except Exception:
+                                continue
             
             # Verify columns were fetched
             # Avoid direct truth check on RangeIndex/Index to prevent "ambiguous truth value" error
