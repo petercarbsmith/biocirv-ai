@@ -336,6 +336,16 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
         }
     }
 
+    # 1b. Create a shared SQLAlchemy engine for "Manual Injection" fallback
+    # This engine will be used to fetch metadata directly if PandasAI's
+    # internal introspection fails.
+    try:
+        # We prefer psycopg2 for standard introspection queries
+        url = f"postgresql+psycopg2://{connection_params['user']}:{connection_params['password']}@{connection_params['host']}:{connection_params['port']}/{connection_params['database']}"
+        engine = create_engine(url, connect_args=connection_params["connect_args"])
+    except Exception:
+        engine = None
+
     # 2. Use default views if none provided
     if not qualified_views:
         qualified_views = [
@@ -363,9 +373,26 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             dataset_path = f"biocirv/{safe_name}-{session_ts}"
 
             # Split schema and table for explicit schema parsing
-            # We use both 'table'/'schema' and 'table_name'/'schema_name' for robustness
             schema_part = view.split(".")[0] if "." in view else "public"
             table_part = view.split(".")[1] if "." in view else view
+
+            # FALLBACK: Manual Metadata Discovery
+            # If standard registration has been returning 0 columns, we fetch them manually.
+            manual_columns = []
+            if engine:
+                try:
+                    from sqlalchemy import inspect
+                    inspector = inspect(engine)
+                    # Try with explicit schema
+                    cols = inspector.get_columns(table_part, schema=schema_part)
+                    if not cols:
+                        # Try without schema (relying on search_path)
+                        cols = inspector.get_columns(table_part)
+                    
+                    if cols:
+                        manual_columns = [c['name'] for c in cols]
+                except Exception as e:
+                    print(f"  ⚠️ Manual discovery for {view} failed: {e}")
 
             source_config = {
                 "type": "postgres",
@@ -376,11 +403,20 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                 "connection": connection_params
             }
 
+            # If we found columns manually, inject them into the source config
+            # This 'forced' injection bypasses the failing SQLAlchemy introspection inside PandasAI.
+            if manual_columns:
+                source_config["columns"] = manual_columns
+
             vdf = create_dataset(
                 path=dataset_path,
                 description=f"BioCirv view: {view}",
                 source=source_config
             )
+
+            # Force columns onto the VDF if they are still missing but we found them
+            if (not hasattr(vdf, "columns") or len(vdf.columns) == 0) and manual_columns:
+                vdf.columns = manual_columns
             
             # Verify columns were fetched
             # Avoid direct truth check on RangeIndex/Index to prevent "ambiguous truth value" error
