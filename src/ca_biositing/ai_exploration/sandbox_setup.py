@@ -315,13 +315,19 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
     """
 
     # 1. Standardize Connection Config (The Singleton)
-    # CRITICAL: This MUST be bit-for-bit identical for every VirtualDataFrame.
+    # We include all discovered schemas in the search_path to allow discovery
+    # and querying without explicit schema prefixes, which keeps the
+    # source_config dictionaries identical (compatible).
+    all_schemas = list(set([v.split(".")[0] for v in qualified_views] if qualified_views else ["ca_biositing", "data_portal"]))
+    search_path = ",".join(all_schemas)
+
     connection_params = {
         "host": str(db_config.get('db_host', '127.0.0.1')),
         "port": int(db_config.get('db_port', 5434)),
         "database": str(db_config['db_name']),
         "user": str(db_config['db_user']),
-        "password": str(db_config['db_pass'])
+        "password": str(db_config['db_pass']),
+        "options": f"-c search_path={search_path}"
     }
 
     # 2. Use default views if none provided
@@ -345,8 +351,10 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
 
     for view in qualified_views:
         try:
-            # table_name for the dataset (can be the qualified string)
-            # path is used by the agent to reference the dataset
+            # Split qualified name to get the bare table name
+            # We rely on connection_params['options'] search_path for discovery
+            _, table = view.split(".") if "." in view else (None, view)
+
             # IMPORTANT: PandasAI 3.0+ expects 'org/dataset' format.
             # It also requires lowercase and hyphens (no underscores).
             safe_name = view.replace(".", "-").replace("_", "-").lower()
@@ -354,7 +362,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
 
             source_config = {
                 "type": "postgres",
-                "table": view,  # schema.table syntax
+                "table": table,  # Use bare table name
                 "connection": connection_params
             }
 
