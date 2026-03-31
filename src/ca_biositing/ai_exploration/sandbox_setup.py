@@ -316,19 +316,21 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
 
     # 1. Standardize Connection Config (The Singleton)
     # We include all discovered schemas in the search_path to allow discovery
-    # and querying without explicit schema prefixes, which keeps the
-    # source_config dictionaries identical (compatible).
+    # and querying without explicit schema prefixes. This ensures the
+    # connection dictionaries remain bit-for-bit identical (compatible).
     all_schemas = list(set([v.split(".")[0] for v in qualified_views] if qualified_views else ["ca_biositing", "data_portal"]))
     search_path = ",".join(all_schemas)
 
-    # 1. Standardize Connection Config (The Singleton)
     # CRITICAL: This MUST be bit-for-bit identical for every VirtualDataFrame.
+    # We add 'options' to set the search_path, which helps SQLAlchemy introspect
+    # views across multiple schemas.
     connection_params = {
         "host": str(db_config.get('db_host', '127.0.0.1')),
         "port": int(db_config.get('db_port', 5434)),
         "database": str(db_config['db_name']),
         "user": str(db_config['db_user']),
-        "password": str(db_config['db_pass'])
+        "password": str(db_config['db_pass']),
+        "options": f"-c search_path={search_path}"
     }
 
     # 2. Use default views if none provided
@@ -357,9 +359,14 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             safe_name = view.replace(".", "-").replace("_", "-").lower()
             dataset_path = f"biocirv/{safe_name}-{session_ts}"
 
+            # Split schema and table for explicit schema parsing if needed
+            schema_part = view.split(".")[0] if "." in view else "public"
+            table_part = view.split(".")[1] if "." in view else view
+
             source_config = {
                 "type": "postgres",
-                "table": view,  # Use FULL schema.table name
+                "table": table_part,
+                "schema": schema_part,
                 "connection": connection_params
             }
 
