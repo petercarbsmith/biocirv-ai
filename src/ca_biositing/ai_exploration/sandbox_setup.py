@@ -246,19 +246,23 @@ class SandboxResponseParser(ResponseParser):
 class BioCirvVirtualDataFrame(VirtualDataFrame):
     """
     Hardened VirtualDataFrame that allows manual column injection
-    to bypass failing internal discovery.
+    to bypass failing internal discovery. Uses recursion-safe lookups.
     """
     def __init__(self, *args, **kwargs):
-        self._forced_columns = kwargs.pop("forced_columns", None)
+        # Capture forced columns before super().__init__
+        forced = kwargs.pop("forced_columns", None)
         super().__init__(*args, **kwargs)
-        if self._forced_columns:
-            object.__setattr__(self, "_columns", self._forced_columns)
+        # Use object.__setattr__ to avoid triggering pandas/vdf attribute logic
+        object.__setattr__(self, "_forced_columns", forced)
+        if forced:
+            object.__setattr__(self, "_columns", forced)
 
     @property
     def columns(self):
-        if hasattr(self, "_forced_columns") and self._forced_columns:
-            import pandas as pd
-            return pd.Index(self._forced_columns)
+        # Use __dict__.get to avoid recursion with __getattr__
+        forced = self.__dict__.get("_forced_columns")
+        if forced:
+            return pd.Index(forced)
         try:
             return super().columns
         except Exception:
@@ -266,9 +270,13 @@ class BioCirvVirtualDataFrame(VirtualDataFrame):
 
     @property
     def columns_count(self):
-        if hasattr(self, "_forced_columns") and self._forced_columns:
-            return len(self._forced_columns)
-        return super().columns_count
+        forced = self.__dict__.get("_forced_columns")
+        if forced:
+            return len(forced)
+        try:
+            return super().columns_count
+        except Exception:
+            return 0
 
 class BioCirvAgent(Agent):
     """Subclassed Agent to ensure TrinityResult is returned from chat()."""
