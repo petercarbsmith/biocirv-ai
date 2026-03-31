@@ -321,14 +321,14 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
     all_schemas = list(set([v.split(".")[0] for v in qualified_views] if qualified_views else ["ca_biositing", "data_portal"]))
     search_path = ",".join(all_schemas)
 
-    # Use standard SQLAlchemy URL string for the connector's internal engine
-    import urllib.parse
-    db_user_quoted = urllib.parse.quote_plus(db_config['db_user'])
-    db_pass_quoted = urllib.parse.quote_plus(db_config['db_pass'])
-    sqlalchemy_url = f"postgresql+psycopg2://{db_user_quoted}:{db_pass_quoted}@{db_config['db_host']}:{db_config['db_port']}/{db_config['db_name']}?options=-csearch_path={search_path}"
-
+    # 1. Standardize Connection Config (The Singleton)
+    # CRITICAL: This MUST be bit-for-bit identical for every VirtualDataFrame.
     connection_params = {
-        "url": sqlalchemy_url
+        "host": str(db_config.get('db_host', '127.0.0.1')),
+        "port": int(db_config.get('db_port', 5434)),
+        "database": str(db_config['db_name']),
+        "user": str(db_config['db_user']),
+        "password": str(db_config['db_pass'])
     }
 
     # 2. Use default views if none provided
@@ -352,10 +352,6 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
 
     for view in qualified_views:
         try:
-            # Split qualified name to get the bare table name
-            # We rely on connection_params['options'] search_path for discovery
-            _, table = view.split(".") if "." in view else (None, view)
-
             # IMPORTANT: PandasAI 3.0+ expects 'org/dataset' format.
             # It also requires lowercase and hyphens (no underscores).
             safe_name = view.replace(".", "-").replace("_", "-").lower()
@@ -363,7 +359,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
 
             source_config = {
                 "type": "postgres",
-                "table": table,  # Use bare table name
+                "table": view,  # Use FULL schema.table name
                 "connection": connection_params
             }
 
