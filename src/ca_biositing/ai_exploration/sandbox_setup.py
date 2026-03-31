@@ -486,7 +486,11 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             # Avoid direct truth check on RangeIndex/Index to prevent "ambiguous truth value" error
             cols = getattr(vdf, "columns", [])
             if cols is None or len(cols) == 0:
-                print(f"  ⚠️ {view}: No columns found. Check connectivity or view existence.")
+                print(f"  ⚠️ {view}: No columns found.")
+                # DIAGNOSTIC: Show us what's inside this object
+                print(f"    🛠️ VDF Attributes: {[a for a in dir(vdf) if not a.startswith('__')]}")
+                if hasattr(vdf, "_connector"):
+                    print(f"    🛠️ Connector Attributes: {[a for a in dir(vdf._connector) if not a.startswith('__')]}")
             else:
                 print(f"  ✅ {view}: Ready ({len(cols)} columns)")
 
