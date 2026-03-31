@@ -27,15 +27,15 @@ def fetch_table_metadata(engine, table_name: str, schema: Optional[str] = None) 
     except Exception:
         return "Unknown columns"
 
-def discover_views(engine, schemas: List[str] = ["ca_biositing", "data_portal"]) -> List[str]:
-    """Automatically discovers all views in the specified schemas."""
+def discover_views(engine, schemas: List[str] = ["ca_biositing", "data_portal"]) -> List[dict]:
+    """Automatically discovers all views in the specified schemas, returning list of {schema, table}."""
     query = text("""
-        SELECT table_name
+        SELECT table_schema as schema_name, table_name
         FROM information_schema.views
         WHERE table_schema = ANY(:schemas)
         AND table_name NOT LIKE 'pg_%%'
         UNION
-        SELECT matviewname as table_name
+        SELECT schemaname as schema_name, matviewname as table_name
         FROM pg_matviews
         WHERE schemaname = ANY(:schemas)
     """)
@@ -43,7 +43,7 @@ def discover_views(engine, schemas: List[str] = ["ca_biositing", "data_portal"])
     try:
         with engine.connect() as conn:
             result = conn.execute(query, {"schemas": schemas})
-            views = [row[0] for row in result]
+            views = [{"schema": row[0], "table": row[1]} for row in result]
         print(f"Auto-discovered {len(views)} views in schemas: {', '.join(schemas)}")
         return views
     except Exception as e:
