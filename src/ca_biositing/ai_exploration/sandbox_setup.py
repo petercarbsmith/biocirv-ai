@@ -142,9 +142,9 @@ class TrinityResult:
 
     def display(self):
         """Explicitly display all components of the trinity."""
-        if self.answer:
+        if self.answer is not None:
             print(f"Answer: {self.answer}")
-        if self.plot:
+        if self.plot is not None:
             display(self.plot)
         if self.data is not None:
             display(self.data)
@@ -215,7 +215,7 @@ class SandboxResponseParser(ResponseParser):
         result = self._last_result or LAST_RESULT_CACHE.get("result")
 
         # Support for PandasAI 3.0+ Response objects
-        if hasattr(result, "value"):
+        if result is not None and hasattr(result, "value"):
             val = result.value
             # Determine type from object class or attributes if possible
             cls_name = result.__class__.__name__
@@ -226,7 +226,7 @@ class SandboxResponseParser(ResponseParser):
             else:
                 answer = val
             
-            if hasattr(result, "last_code_executed") and result.last_code_executed:
+            if hasattr(result, "last_code_executed") and getattr(result, "last_code_executed", None):
                 code = result.last_code_executed
 
         # Visualization Unwrapping Logic (for dict results or raw results)
@@ -287,9 +287,9 @@ class BioCirvAgent(Agent):
         plot = None
         answer = result
 
-        if hasattr(result, "value"):
+        if result is not None and hasattr(result, "value"):
             answer = result.value
-            if hasattr(result, "last_code_executed"):
+            if hasattr(result, "last_code_executed") and getattr(result, "last_code_executed", None):
                 code = result.last_code_executed
             
             cls_name = result.__class__.__name__

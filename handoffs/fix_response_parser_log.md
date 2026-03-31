@@ -27,4 +27,7 @@ This document tracks the changes and investigation for the `AttributeError: 'Bio
 
 ### Progress - Update 3 (Refining based on PandasAI 3.0 Response objects)
 - User provided internal `ResponseParser` source which shows it now returns `BaseResponse` objects (NumberResponse, StringResponse, etc.).
-- I will further refine `get_trinity` and `BioCirvAgent.chat` to handle these response objects if they are returned by `super().chat()`.
+- Refined `get_trinity` and `BioCirvAgent.chat` to handle these response objects if they are returned by `super().chat()`.
+
+### Progress - Update 4 (Fixing Ambiguous Truth Value Error)
+- Fixed `ValueError: The truth value of a DataFrame is ambiguous.` in `TrinityResult` by replacing `if self.answer:` with `if self.answer is not None:` (and similarly for `plot` and `data`).
