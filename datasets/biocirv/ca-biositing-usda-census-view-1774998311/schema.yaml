@@ -1,0 +1,30 @@
+name: ca_biositing_usda_census_view_1774998311
+source:
+  type: parquet
+  path: data.parquet
+description: 'BioCirv view: ca_biositing.usda_census_view'
+columns:
+- name: id
+  type: string
+- name: usda_crop
+  type: string
+- name: geoid
+  type: string
+- name: parameter
+  type: string
+- name: value
+  type: string
+- name: unit
+  type: string
+- name: dimension
+  type: string
+- name: dimension_value
+  type: string
+- name: dimension_unit
+  type: string
+- name: commodity_id
+  type: string
+- name: source_record_id
+  type: string
+- name: record_year
+  type: string

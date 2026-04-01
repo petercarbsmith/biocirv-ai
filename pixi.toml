@@ -12,11 +12,19 @@ scipy = ">=1.10.1,<1.11"
 matplotlib = ">=3.7.1,<3.8"
 pillow = ">=10.1.0,<11.0.0"
 packaging = "<25"
+requests = "*"
+python-dotenv = "*"
+sqlalchemy = ">=2.0.0"
+plotly = "*"
+psycopg2-binary = "*"
+google-cloud-secret-manager = "*"
 
 [pypi-dependencies]
 ca-biositing-ai-exploration = { path = ".", editable = true }
 pandasai = ">=3.0.0"
-pandasai-sql = { version = ">=0.1.0", extras = ["postgres"] }
+pandasai-sql = ">=0.1.0"
+pg8000 = "*"
+cloud-sql-python-connector = { version = "*", extras = ["pg8000"] }
 
 [feature.gis.dependencies]
 geopandas = "*"

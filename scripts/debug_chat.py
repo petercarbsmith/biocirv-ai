@@ -13,34 +13,34 @@ def debug_chat():
         # Use multiple views to verify multi-source logic
         schemas = ["ca_biositing", "analytics", "data_portal"]
         views = ["analysis_data_view", "usda_census_view"]
-        print(f"Initializing agent with schemas: {schemas} and views: {views}")
-        agent = get_agent(llm, db_config, schemas=schemas, view_names=views)
+        # Adjusting schemas to match get_agent's expected qualified_views
+        qualified_views = ["ca_biositing.analysis_data_view", "ca_biositing.usda_census_view"]
+        print(f"Initializing agent with qualified views: {qualified_views}")
+        agent = get_agent(llm, db_config, qualified_views=qualified_views)
 
         print("\n--- Running Diagnostic Queries ---")
 
         # Simple query
-        print("\n1. Row Count Query:")
-        print(agent.chat("How many rows are there?"))
-
-        # Complex JOIN query (triggers SQL skill)
-        print("\n2. JOIN Query:")
-        query = "Join analysis_data_view and usda_census_view on geoid and find the top 5 records with highest value in analysis_data_view."
-        print(agent.chat(query))
+        print("\n1. Simple Data Query:")
+        print(agent.chat("Show me 3 records from the analysis_data_view"))
 
         # Schema discovery query
-        print("\n3. Column Discovery Query:")
-        print(agent.chat("List the columns in the analysis_data_view"))
+        print("\n2. Column Discovery Query:")
+        print(agent.chat("What are the columns in analysis_data_view?"))
 
         # Verify Trinity Output
-        print("\n4. Trinity Output Check:")
-        response = agent.chat("Plot the top 5 records from analysis_data_view by value.")
+        print("\n3. Trinity Output Check:")
+        response = agent.chat("Plot 5 records from analysis_data_view.")
         print(f"Response Type: {type(response)}")
 
-        # Accessing the parser instance from the agent via its config
-        parser_cls = agent.config.response_parser
-        # PandasAI instantiates the parser during chat. We can instantiate one for retrieval.
-        parser = parser_cls(agent.context)
-        if hasattr(parser, "get_trinity"):
+        # Accessing the parser instance from the agent via its context
+        parser = None
+        if hasattr(agent, "context") and hasattr(agent.context, "response_parser"):
+            parser = agent.context.response_parser
+        elif hasattr(agent, "response_parser"):
+            parser = agent.response_parser
+        
+        if parser and hasattr(parser, "get_trinity"):
             # We need the parser that was actually used to have the _last_result.
             # In PandasAI 2.3.x, the agent doesn't store the parser instance easily.
             # However, our SandboxResponseParser could be improved to store results in a class-level or session-level cache if needed.

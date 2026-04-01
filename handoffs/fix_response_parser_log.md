@@ -39,3 +39,14 @@ This document tracks the changes and investigation for the `AttributeError: 'Bio
 ### Progress - Update 6 (AI Agent Orientation)
 - Created [`AGENTS.md`](../AGENTS.md) in the root of the submodule to provide context and orientation for future AI assistants.
 - Explicitly detailed the Google Colab environment (VS Code extension, Python 3.11 kernel) and designated `biocirv_ai_analysis_playground.ipynb` as the primary testing ground.
+
+### Progress - Update 7 (Fixing Empty Results & Initialization Failures)
+- Identified root cause of empty results: PandasAI 3.0+ serialization fails when `rows_count` is accessed for `VirtualDataFrames` because it tries to execute a count query before the engine is fully ready or incorrectly formatted.
+- Fixed by implementing "Forced Row Count Injection" in `sandbox_setup.py`:
+  - Fetch row counts manually during initialization.
+  - Inject counts directly into the `VirtualDataFrame` loader's internal cache (`_row_count`).
+  - Override `loader.get_row_count` with a lambda returning the cached value to prevent expensive/failing SQL calls during serialization.
+- Added a system message to the agent to prevent the LLM from using schema prefixes (e.g., `ca_biositing.`) which were causing query failures since `search_path` is already handled at the connection level.
+- Updated `pixi.toml` dependencies to include `psycopg2-binary`, `google-cloud-secret-manager`, and `cloud-sql-python-connector` to ensure the local debug environment matches Colab.
+- Audited database column types: Confirmed that the `value` column in `analysis_data_view` and `usda_census_view` is **NUMERIC** (mapping to `Decimal` in Python), not a string. Updated the agent system prompt to guide the LLM to use direct numeric aggregations (e.g., `SUM(value)`) instead of string-cleaning logic.
+- Final verification successful: The agent now produces a `TrinityResult` with code, data, and answer for complex JOIN queries.

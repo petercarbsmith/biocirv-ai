@@ -311,13 +311,17 @@ def init_sandbox(model_name: Optional[str] = None, cloud_mode: bool = False):
 
     llm = CBORGLLM(api_token=api_key, api_base=api_url, model=selected_model)
 
+    # Force use of Cloud SQL Staging settings if CLOUD_MODE is true or if explicitly initialized
+    cloud_mode_env = os.getenv("CLOUD_MODE", "false").lower() == "true"
+    is_cloud = cloud_mode or cloud_mode_env
+
     config = {
-        "db_user": os.getenv("DB_USER", os.getenv("DB_IAM_USER", "biocirv_user")),
-        "db_pass": os.getenv("DB_PASSWORD", os.getenv("DB_PASS", "biocirv_dev_password")),
+        "db_user": os.getenv("DB_USER", "biocirv_readonly" if is_cloud else "biocirv_user"),
+        "db_pass": os.getenv("DB_PASS", os.getenv("DB_PASSWORD", "biocirv_dev_password")),
         "db_host": os.getenv("DB_HOST", "127.0.0.1"),
         "db_port": os.getenv("DB_PORT", "5434"),
-        "db_name": os.getenv("DB_NAME", "biocirv_db"),
-        "cloud_mode": cloud_mode or os.getenv("CLOUD_MODE", "false").lower() == "true",
+        "db_name": os.getenv("DB_NAME", "biocirv-staging" if is_cloud else "biocirv_db"),
+        "cloud_mode": is_cloud,
         "instance_connection_name": os.getenv("INSTANCE_CONNECTION_NAME"),
         "db_iam_user": os.getenv("DB_IAM_USER")
     }
@@ -433,6 +437,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             # FALLBACK: Manual Metadata Discovery
             # If standard registration has been returning 0 columns, we fetch them manually.
             manual_columns = []
+            manual_rows = 0
             if engine:
                 try:
                     # 1. Try Primitive SQL Fallback (Most reliable for PostGIS views)
@@ -445,6 +450,13 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                         manual_columns = [col for col in res.keys()]
                         if manual_columns:
                             print(f"    🔍 Manual SQL discovery success: {len(manual_columns)} columns")
+                            # Also fetch row count to prevent the Loader failure later
+                            try:
+                                res_count = conn.execute(text(f'SELECT count(*) FROM "{schema_part}"."{table_part}"'))
+                                manual_rows = res_count.fetchone()[0]
+                                print(f"    🔍 Manual row count success: {manual_rows} rows")
+                            except Exception as e_count:
+                                print(f"    ⚠️ Manual row count failed for {view}: {e_count}")
                 except Exception as e1:
                     # 2. Try SQLAlchemy Inspector as backup
                     try:
@@ -513,7 +525,33 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                             object.__setattr__(obj, attr, val)
                         except Exception:
                             continue
-            
+                
+                # Inject row count into loader to prevent execution during serialization
+                loader = getattr(vdf, "_loader", None)
+                if loader:
+                    # Inject into the internal attribute if it exists
+                    try:
+                        object.__setattr__(loader, "_row_count", manual_rows)
+                    except Exception:
+                        pass
+                    
+                    # Use method-level shadowing on the instance to return the manual count
+                    # This prevents the loader from attempting to execute a COUNT(*) query
+                    # during prompt serialization.
+                    try:
+                        loader.get_row_count = lambda: manual_rows
+                    except Exception:
+                        pass
+                
+                # Shadow at the VDF instance level as well.
+                # In some versions of PandasAI, rows_count is a property or an attribute.
+                try:
+                    # Try setting attribute
+                    object.__setattr__(vdf, "rows_count", manual_rows)
+                    object.__setattr__(vdf, "_rows_count", manual_rows)
+                except Exception:
+                    pass
+
             # Verify columns were fetched
             # Avoid direct truth check on RangeIndex/Index to prevent "ambiguous truth value" error
             cols = getattr(vdf, "columns", [])
@@ -542,10 +580,33 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             "response_parser": SandboxResponseParser,
             "enable_cache": False,
             "use_error_correction_framework": True,
+            "max_retries": 2,
             "custom_whitelisted_dependencies": ["sqlalchemy", "psycopg2", "plotly", "matplotlib", "seaborn"],
             "save_charts": True,
             "save_charts_path": "exports/charts",
         }
     )
+
+    # FINAL FIX: Add custom system prompt to guide LLM away from schema prefixes
+    # and towards using correct column names from the provided metadata.
+    try:
+        # Check for both agent and its internal context messages
+        msg = (
+            "System: You are a PostgreSQL expert. Use the provided column names. "
+            "Table names in SQL should NOT have schema prefixes (e.g. use 'analysis_data_view', NOT 'ca_biositing.analysis_data_view'). "
+            "The search_path is already set. "
+            "IMPORTANT: The 'value' column is a NUMERIC type. Do NOT use string functions like LIKE, REPLACE, or regex on it. "
+            "Simply use SUM(value), AVG(value), etc. "
+            "Keep SQL simple and standard to avoid parser errors."
+        )
+        if hasattr(agent, "add_message"):
+            agent.add_message(msg)
+        elif hasattr(agent, "context") and hasattr(agent.context, "messages"):
+            agent.context.messages.append({
+                "role": "system",
+                "content": msg
+            })
+    except Exception as e:
+        print(f"  ⚠️ Failed to inject system message: {e}")
 
     return agent

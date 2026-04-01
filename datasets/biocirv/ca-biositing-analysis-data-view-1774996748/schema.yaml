@@ -1,0 +1,11 @@
+name: ca_biositing_analysis_data_view_1774996748
+source:
+  type: postgres
+  connection:
+    host: 127.0.0.1
+    port: 5434
+    database: biocirv-staging
+    user: biocirv_readonly
+    password: biocirv_dev_password
+  table: analysis_data_view
+description: 'BioCirv view: ca_biositing.analysis_data_view'
