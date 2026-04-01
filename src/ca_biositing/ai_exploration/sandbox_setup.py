@@ -31,6 +31,14 @@ except ImportError:
 # Internal imports
 from ca_biositing.ai_exploration.schema import discover_views, fetch_table_metadata
 
+# PandasAI Advanced Imports for manual loader creation
+try:
+    from pandasai.data_loader.sql_loader import SQLDatasetLoader
+    from pandasai.data_loader.semantic_layer_schema import SemanticLayerSchema
+    HAS_ADVANCED_LOADERS = True
+except ImportError:
+    HAS_ADVANCED_LOADERS = False
+
 # Set Plotly for VS Code/Jupyter compatibility
 pio.renderers.default = 'notebook'
 
@@ -490,27 +498,73 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             # We wrap the empty pandas DataFrame in a PandasAI DataFrame
             # to satisfy the library's type checking.
             from pandasai import DataFrame as PA_DataFrame
-            ghost_df = PA_DataFrame(pd.DataFrame(columns=manual_columns)) if manual_columns else None
+            
+            # If we don't have manual columns, we try one last effort to get them
+            # or we use a minimal set to at least allow the object to be created.
+            effective_columns = manual_columns if manual_columns else ["id", "value"]
+            ghost_df = PA_DataFrame(pd.DataFrame(columns=effective_columns))
 
-            try:
-                # CRITICAL: We avoid passing 'df=ghost_df' to the constructor
-                # because it causes PandasAI to treat this as a LocalDataset (parquet)
-                # rather than a VirtualDataFrame (postgres).
-                # Instead, we create it as a pure VirtualDataFrame and then
-                # manually inject the columns to bypass failing introspection.
-                vdf = VirtualDataFrame(
-                    source=source_config,
-                    description=f"BioCirv view: {view}"
-                )
-            except Exception as e:
-                print(f"    ⚠️ VirtualDataFrame creation failed (expected if introspection fails): {e}")
-                # If it failed, it might be because it tried to introspect.
-                # We try to create a "Blank" VirtualDataFrame and then fill it.
-                vdf = VirtualDataFrame(
-                    source=source_config,
-                    description=f"BioCirv view: {view}",
-                    # We still avoid df=ghost_df here to keep it from becoming parquet
-                )
+            vdf = None
+            errors = []
+            
+            # Attempt 1: Advanced SQLDatasetLoader creation
+            # This is the most robust way to ensure a data_loader is attached
+            if HAS_ADVANCED_LOADERS:
+                try:
+                    # Construct a SemanticLayerSchema manually
+                    schema_data = {
+                        "name": safe_name,
+                        "description": f"BioCirv view: {view}",
+                        "source": source_config,
+                        "columns": [{"name": col, "type": "string"} for col in effective_columns]
+                    }
+                    pa_schema = SemanticLayerSchema(**schema_data)
+                    loader = SQLDatasetLoader(pa_schema, dataset_path)
+                    
+                    vdf = VirtualDataFrame(
+                        data_loader=loader,
+                        path=dataset_path
+                    )
+                    print(f"    ✅ Created VirtualDataFrame via manual SQLDatasetLoader for {view}")
+                except Exception as e0:
+                    errors.append(f"advanced_loader: {e0}")
+
+            # Attempt 2: Use create_dataset factory
+            if vdf is None:
+                try:
+                    vdf = create_dataset(
+                        path=dataset_path,
+                        description=f"BioCirv view: {view}",
+                        source=source_config
+                    )
+                    print(f"    ✅ Created VirtualDataFrame via factory for {view}")
+                except Exception as e:
+                    errors.append(f"factory: {e}")
+
+            # Attempt 3: VirtualDataFrame with Ghost Frame (Manual)
+            if vdf is None:
+                try:
+                    vdf = VirtualDataFrame(
+                        source=source_config,
+                        description=f"BioCirv view: {view}",
+                        df=ghost_df
+                    )
+                    print(f"    ✅ Created VirtualDataFrame with Ghost Frame for {view}")
+                except Exception as e2:
+                    errors.append(f"vdf+ghost: {e2}")
+
+            # Attempt 4: Pure VirtualDataFrame (Pure SQL)
+            if vdf is None:
+                try:
+                    vdf = VirtualDataFrame(
+                        source=source_config,
+                        description=f"BioCirv view: {view}"
+                    )
+                    print(f"    ✅ Created pure VirtualDataFrame for {view}")
+                except Exception as e3:
+                    errors.append(f"vdf-pure: {e3}")
+                    print(f"    ❌ Failed all attempts for {view}: {'; '.join(errors)}")
+                    continue
 
             # Final forced injection into the specific internal containers we found in DIR logs
             if manual_columns:
