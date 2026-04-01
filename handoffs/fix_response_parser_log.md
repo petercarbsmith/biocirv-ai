@@ -75,3 +75,13 @@ This document tracks the changes and investigation for the `AttributeError: 'Bio
   - Modified the `SQLDatasetLoader` initialization to use the **fully qualified** table name (`schema.table`) in its source config.
   - Implemented **Safe Head Injection**: Shadowed the `vdf.head()` method with a lambda returning a dummy DataFrame. This prevents the database from being queried at all during the fragile prompt serialization phase.
   - Updated the agent's system prompt to strictly use **qualified table names** in SQL queries, ensuring PostgreSQL always finds the views regardless of `search_path` state.
+
+### 📅 2026-04-01
+
+### Progress - Update 11 (Stable No-Geo Prototype)
+- Implemented a "No-Geo" stable prototype to bypass PostGIS-related instability.
+- Created `src/ca_biositing/ai_exploration/sandbox_setup_no_geo.py` which uses standard `SQLDatasetLoader` and `SemanticLayerSchema` without complex monkeypatching.
+- The new setup focuses on non-geospatial materialized views (`analysis_data_view`, `analysis_average_view`).
+- Created `notebooks/biocirv_ai_stable_prototype.ipynb` as the new primary entry point for stakeholders.
+- Verified the setup with `scripts/test_no_geo_agent.py`.
+- Updated `AGENTS.md` to reflect the new stable architecture.

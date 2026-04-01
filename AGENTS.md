@@ -23,11 +23,13 @@ Before making changes, you **MUST** understand these core strategies:
 
 ### Core Logic
 - [`src/ca_biositing/ai_exploration/sandbox_setup.py`](src/ca_biositing/ai_exploration/sandbox_setup.py): The main factory (`get_agent`) and agent class definitions. **Primary area for logic fixes.**
+- [`src/ca_biositing/ai_exploration/sandbox_setup_no_geo.py`](src/ca_biositing/ai_exploration/sandbox_setup_no_geo.py): Simplified factory for the **Stable Prototype**. Focuses on non-geospatial views.
 - [`src/ca_biositing/ai_exploration/schema.py`](src/ca_biositing/ai_exploration/schema.py): Metadata discovery and view inspection logic.
 - [`src/ca_biositing/ai_exploration/colab_setup.py`](src/ca_biositing/ai_exploration/colab_setup.py): Environment initialization for Google Colab.
 
 ### Interfaces & Testing Grounds
-- [`notebooks/biocirv_ai_analysis_playground.ipynb`](notebooks/biocirv_ai_analysis_playground.ipynb): **The primary testing ground and stakeholder interface.** Use this notebook to verify end-to-end agent behavior.
+- [`notebooks/biocirv_ai_stable_prototype.ipynb`](notebooks/biocirv_ai_stable_prototype.ipynb): **The primary stable prototype.** Use this for stakeholders who need reliable, non-geospatial analysis.
+- [`notebooks/biocirv_ai_analysis_playground.ipynb`](notebooks/biocirv_ai_analysis_playground.ipynb): The experimental testing ground and original stakeholder interface.
 - [`notebooks/sandbox_exploration.ipynb`](notebooks/sandbox_exploration.ipynb): Developer sandbox for testing new features.
 
 ### Diagnostics & Testing
