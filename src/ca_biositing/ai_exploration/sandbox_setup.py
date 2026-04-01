@@ -373,6 +373,9 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
     # and querying without explicit schema prefixes. This ensures the
     # connection dictionaries remain bit-for-bit identical (compatible).
     all_schemas = list(set([v.split(".")[0] for v in qualified_views] if qualified_views else ["ca_biositing", "data_portal"]))
+    # Ensure public is present for system types/extensions
+    if "public" not in all_schemas:
+        all_schemas.append("public")
     search_path = ",".join(all_schemas)
 
     # CRITICAL: This MUST be bit-for-bit identical for every VirtualDataFrame.
@@ -461,7 +464,8 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                             # Also fetch row count to prevent the Loader failure later
                             try:
                                 res_count = conn.execute(text(f'SELECT count(*) FROM "{schema_part}"."{table_part}"'))
-                                manual_rows = res_count.fetchone()[0]
+                                row = res_count.fetchone()
+                                manual_rows = row[0] if row else 0
                                 print(f"    🔍 Manual row count success: {manual_rows} rows")
                             except Exception as e_count:
                                 print(f"    ⚠️ Manual row count failed for {view}: {e_count}")
@@ -512,10 +516,14 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             if HAS_ADVANCED_LOADERS:
                 try:
                     # Construct a SemanticLayerSchema manually
+                    # We use the FULL view name (schema.table) for the source config to avoid UndefinedTable
+                    advanced_source_config = source_config.copy()
+                    advanced_source_config["table"] = view
+                    
                     schema_data = {
                         "name": safe_name,
                         "description": f"BioCirv view: {view}",
-                        "source": source_config,
+                        "source": advanced_source_config,
                         "columns": [{"name": col, "type": "string"} for col in effective_columns]
                     }
                     pa_schema = SemanticLayerSchema(**schema_data)
@@ -525,6 +533,8 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                         data_loader=loader,
                         path=dataset_path
                     )
+                    # Manually attach schema for serialization if needed
+                    vdf.schema = pa_schema
                     print(f"    ✅ Created VirtualDataFrame via manual SQLDatasetLoader for {view}")
                 except Exception as e0:
                     errors.append(f"advanced_loader: {e0}")
@@ -612,6 +622,33 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             # Verify columns were fetched
             # Avoid direct truth check on RangeIndex/Index to prevent "ambiguous truth value" error
             cols = getattr(vdf, "columns", [])
+
+            # GHOST HEAD INJECTION:
+            # We inject a dummy head to prevent PandasAI from attempting to query
+            # the database during prompt serialization (which often fails due to search_path issues).
+            if vdf is not None:
+                try:
+                    # Construct dummy data with same columns
+                    dummy_head = pd.DataFrame(columns=manual_columns if manual_columns else effective_columns)
+                    
+                    # We use object.__setattr__ to bypass property setters and force the cache
+                    object.__setattr__(vdf, "_head", dummy_head)
+                    
+                    # Also shadow the head method on the instance to return the dummy
+                    vdf.head = lambda n=5: dummy_head
+                except Exception:
+                    pass
+
+            # SEMANTIC LAYER INJECTION:
+            # In PandasAI 3.0+, metadata is often read from the schema object.
+            # We force-inject the columns into the schema object if it exists.
+            if vdf is not None and hasattr(vdf, "schema") and vdf.schema is not None:
+                try:
+                    if manual_columns:
+                        vdf.schema.columns = [{"name": col, "type": "string"} for col in manual_columns]
+                except Exception:
+                    pass
+
             if cols is None or len(cols) == 0:
                 print(f"  ⚠️ {view}: No columns found.")
                 # DIAGNOSTIC: Show us what's inside this object
@@ -650,11 +687,11 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
         # Check for both agent and its internal context messages
         msg = (
             "System: You are a PostgreSQL expert. Use the provided column names. "
-            "CRITICAL: Always refer to tables BY THEIR UNQUALIFIED NAME (e.g. use 'analysis_data_view', NOT 'ca_biositing.analysis_data_view'). "
-            "The search_path is already set to include the necessary schemas. "
+            "CRITICAL: Always refer to tables BY THEIR QUALIFIED NAME (e.g. 'ca_biositing.analysis_data_view'). "
+            "Table names in SQL MUST include the schema prefix (e.g. 'ca_biositing.') in ALL your queries to avoid 'UndefinedTable' errors. "
+            "The search_path is set to include 'ca_biositing', 'data_portal', and 'public'. "
             "IMPORTANT: The 'value' column is a NUMERIC type. Do NOT use string functions like LIKE, REPLACE, or regex on it. "
             "Simply use SUM(value), AVG(value), etc. "
-            "If the user provides a qualified name like 'ca_biositing.analysis_data_view', YOU MUST REMOVE the 'ca_biositing.' prefix in the SQL you generate. "
             "Keep SQL simple and standard to avoid parser errors."
         )
         if hasattr(agent, "add_message"):
