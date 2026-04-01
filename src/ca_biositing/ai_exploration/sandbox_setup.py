@@ -493,20 +493,23 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             ghost_df = PA_DataFrame(pd.DataFrame(columns=manual_columns)) if manual_columns else None
 
             try:
-                # Use the standard factory but provide the ghost frame as data
-                vdf = create_dataset(
-                    path=dataset_path,
-                    description=f"BioCirv view: {view}",
+                # CRITICAL: We avoid passing 'df=ghost_df' to the constructor
+                # because it causes PandasAI to treat this as a LocalDataset (parquet)
+                # rather than a VirtualDataFrame (postgres).
+                # Instead, we create it as a pure VirtualDataFrame and then
+                # manually inject the columns to bypass failing introspection.
+                vdf = VirtualDataFrame(
                     source=source_config,
-                    df=ghost_df # Inject discovered metadata via Ghost Frame
+                    description=f"BioCirv view: {view}"
                 )
             except Exception as e:
-                print(f"    ⚠️ create_dataset failed: {e}")
-                # Fallback to direct constructor if factory fails
+                print(f"    ⚠️ VirtualDataFrame creation failed (expected if introspection fails): {e}")
+                # If it failed, it might be because it tried to introspect.
+                # We try to create a "Blank" VirtualDataFrame and then fill it.
                 vdf = VirtualDataFrame(
                     source=source_config,
                     description=f"BioCirv view: {view}",
-                    df=ghost_df
+                    # We still avoid df=ghost_df here to keep it from becoming parquet
                 )
 
             # Final forced injection into the specific internal containers we found in DIR logs
@@ -593,10 +596,11 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
         # Check for both agent and its internal context messages
         msg = (
             "System: You are a PostgreSQL expert. Use the provided column names. "
-            "Table names in SQL should NOT have schema prefixes (e.g. use 'analysis_data_view', NOT 'ca_biositing.analysis_data_view'). "
-            "The search_path is already set. "
+            "CRITICAL: Always refer to tables BY THEIR UNQUALIFIED NAME (e.g. use 'analysis_data_view', NOT 'ca_biositing.analysis_data_view'). "
+            "The search_path is already set to include the necessary schemas. "
             "IMPORTANT: The 'value' column is a NUMERIC type. Do NOT use string functions like LIKE, REPLACE, or regex on it. "
             "Simply use SUM(value), AVG(value), etc. "
+            "If the user provides a qualified name like 'ca_biositing.analysis_data_view', YOU MUST REMOVE the 'ca_biositing.' prefix in the SQL you generate. "
             "Keep SQL simple and standard to avoid parser errors."
         )
         if hasattr(agent, "add_message"):

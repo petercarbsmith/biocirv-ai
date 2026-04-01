@@ -50,3 +50,11 @@ This document tracks the changes and investigation for the `AttributeError: 'Bio
 - Updated `pixi.toml` dependencies to include `psycopg2-binary`, `google-cloud-secret-manager`, and `cloud-sql-python-connector` to ensure the local debug environment matches Colab.
 - Audited database column types: Confirmed that the `value` column in `analysis_data_view` and `usda_census_view` is **NUMERIC** (mapping to `Decimal` in Python), not a string. Updated the agent system prompt to guide the LLM to use direct numeric aggregations (e.g., `SUM(value)`) instead of string-cleaning logic.
 - Final verification successful: The agent now produces a `TrinityResult` with code, data, and answer for complex JOIN queries.
+
+### Progress - Update 8 (Fixing "No data found" issue with VirtualDataFrames)
+- Identified a regression where passing `df=ghost_df` to the `VirtualDataFrame` constructor (or `create_dataset`) was causing PandasAI to treat the source as a local Parquet/DataFrame source instead of a remote SQL source. This resulted in queries running against an empty in-memory DataFrame instead of the database.
+- Modified `sandbox_setup.py` to:
+  - Remove `df=ghost_df` from the `VirtualDataFrame` constructor to ensure it stays in "SQL-first" mode.
+  - Continue manual injection of columns and row counts *after* object instantiation to bypass the introspection failures caused by PostGIS types.
+  - Refined the system prompt to explicitly instruct the LLM to remove schema prefixes (e.g., `ca_biositing.`) even if the user provides them, ensuring the `search_path` mechanism works correctly.
+- Added `public` to the `search_path` as a safety measure for common types/functions, while keeping the focus on the analytics schemas.
