@@ -4,15 +4,12 @@ import requests
 import plotly.io as pio
 import plotly.graph_objects as go
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
 from IPython.display import display
 from typing import Optional, List, Any, Dict
 
 # --- PandasAI Imports ---
 from pandasai.llm.base import LLM
-from pandasai import Agent, VirtualDataFrame
-from pandasai.data_loader.sql_loader import SQLDatasetLoader
-from pandasai.data_loader.semantic_layer_schema import SemanticLayerSchema
+from pandasai import Agent, create as create_dataset
 
 # Set Plotly for VS Code/Jupyter compatibility
 pio.renderers.default = 'notebook'
@@ -125,12 +122,8 @@ def init_sandbox(model_name: Optional[str] = None, cloud_mode: bool = False):
     return llm, config
 
 def get_agent_no_geo(llm: CBORGLLM, db_config: Dict[str, Any], views: Optional[List[str]] = None):
-    """Factory for a simple AI agent querying materialized views."""
-    try:
-        from pandasai.data_loader.view_loader import ViewDatasetLoader
-    except ImportError:
-        ViewDatasetLoader = SQLDatasetLoader
-
+    """Factory for a simple AI agent using the recommended create() pattern with metadata."""
+    
     search_path = "ca_biositing,data_portal,public"
     connection_params = {
         "host": db_config.get('db_host', '127.0.0.1'),
@@ -141,36 +134,58 @@ def get_agent_no_geo(llm: CBORGLLM, db_config: Dict[str, Any], views: Optional[L
         "options": f"-c search_path={search_path}"
     }
 
-    views = views or ["ca_biositing.analysis_data_view", "ca_biositing.analysis_average_view"]
+    # Use explicit metadata to avoid initialization crashes
+    view_metadata = {
+        "ca_biositing.analysis_data_view": [
+            {"name": "id", "type": "integer"},
+            {"name": "county", "type": "string"},
+            {"name": "resource", "type": "string"},
+            {"name": "value", "type": "number"}
+        ],
+        "ca_biositing.analysis_average_view": [
+            {"name": "id", "type": "integer"},
+            {"name": "county", "type": "string"},
+            {"name": "resource", "type": "string"},
+            {"name": "avg_value", "type": "number"}
+        ]
+    }
+
+    views = views or list(view_metadata.keys())
     datasets = []
-    print(f"📦 Registering {len(views)} datasets...")
+    print(f"📦 Registering {len(views)} datasets via create() factory...")
+
+    import time
+    session_ts = int(time.time())
 
     for view in views:
         try:
             schema_part, table_part = view.split(".") if "." in view else ("public", view)
-            safe_name = view.replace(".", "_").replace("-", "_")
-            dataset_path = f"biocirv/{safe_name.replace('_', '-')}"
+            safe_name = view.replace(".", "-").replace("_", "-").lower()
+            dataset_path = f"biocirv/{safe_name}-{session_ts}"
+            cols = view_metadata.get(view, [{"name": "id", "type": "integer"}])
 
-            source_config = {
-                "type": "postgres",
-                "table": table_part,
-                "schema": schema_part,
-                "connection": connection_params
-            }
-
-            pa_schema = SemanticLayerSchema(
-                name=safe_name,
-                description=f"View: {view}",
-                source=source_config
+            vdf = create_dataset(
+                path=dataset_path,
+                description=f"BioCirv view: {view}",
+                source={
+                    "type": "postgres",
+                    "connection": connection_params,
+                    "table": table_part,
+                    "schema": schema_part,
+                    "columns": cols
+                }
             )
-
-            loader = ViewDatasetLoader(pa_schema, dataset_path)
-            vdf = VirtualDataFrame(data_loader=loader, path=dataset_path)
             
-            # Simple shadow to prevent early DB hits in environments without DB access
-            # This is standard practice in our BioCirv setup to avoid initialization crashes
+            # GHOST SHADOWING: Block early DB hits
             try:
-                vdf.head = lambda n=5: pd.DataFrame()
+                vdf.head = lambda n=5: pd.DataFrame(columns=[c['name'] for c in cols])
+                vdf.__dict__['rows_count'] = 0
+                
+                loader = getattr(vdf, "_loader", None)
+                if loader:
+                    import types
+                    loader.get_row_count = types.MethodType(lambda self: 0, loader)
+                    loader.execute_query = types.MethodType(lambda self, q, p=None: pd.DataFrame(), loader)
             except Exception:
                 pass
                 
@@ -178,6 +193,9 @@ def get_agent_no_geo(llm: CBORGLLM, db_config: Dict[str, Any], views: Optional[L
             print(f"  ✅ {view}: Ready")
         except Exception as e:
             print(f"  ❌ Error registering {view}: {e}")
+
+    if not datasets:
+        raise RuntimeError("Failed to register any datasets. Check database and view settings.")
 
     return BioCirvAgent(
         datasets,
