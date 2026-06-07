@@ -86,7 +86,7 @@ class BioCirvAgent(Agent):
         result = super().chat(prompt, output_type)
         code = getattr(self, "last_code_executed", "")
         if code: SESSION_CODE_LOG.append(code)
-        
+
         data, plot, answer = None, None, result
         if result is not None and hasattr(result, "value"):
             val = result.value
@@ -95,7 +95,7 @@ class BioCirvAgent(Agent):
             else: answer = val
         elif isinstance(result, pd.DataFrame): data = result
         elif isinstance(result, (go.Figure, go.FigureWidget)): plot = result
-        
+
         return TrinityResult(code=code, data=data, plot=plot, answer=answer)
 
 def init_sandbox(model_name: Optional[str] = None, cloud_mode: bool = False):
@@ -123,7 +123,7 @@ def init_sandbox(model_name: Optional[str] = None, cloud_mode: bool = False):
 
 def get_agent_no_geo(llm: CBORGLLM, db_config: Dict[str, Any], views: Optional[List[str]] = None):
     """Factory for a simple AI agent using the recommended create() pattern with metadata."""
-    
+
     search_path = "ca_biositing,data_portal,public"
     connection_params = {
         "host": db_config.get('db_host', '127.0.0.1'),
@@ -175,12 +175,12 @@ def get_agent_no_geo(llm: CBORGLLM, db_config: Dict[str, Any], views: Optional[L
                     "columns": cols
                 }
             )
-            
+
             # GHOST SHADOWING: Block early DB hits
             try:
                 vdf.head = lambda n=5: pd.DataFrame(columns=[c['name'] for c in cols])
                 vdf.__dict__['rows_count'] = 0
-                
+
                 loader = getattr(vdf, "_loader", None)
                 if loader:
                     import types
@@ -188,7 +188,7 @@ def get_agent_no_geo(llm: CBORGLLM, db_config: Dict[str, Any], views: Optional[L
                     loader.execute_query = types.MethodType(lambda self, q, p=None: pd.DataFrame(), loader)
             except Exception:
                 pass
-                
+
             datasets.append(vdf)
             print(f"  ✅ {view}: Ready")
         except Exception as e:

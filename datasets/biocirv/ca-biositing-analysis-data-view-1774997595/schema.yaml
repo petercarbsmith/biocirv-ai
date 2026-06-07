@@ -2,29 +2,29 @@ name: ca_biositing_analysis_data_view_1774997595
 source:
   type: parquet
   path: data.parquet
-description: 'BioCirv view: ca_biositing.analysis_data_view'
+description: "BioCirv view: ca_biositing.analysis_data_view"
 columns:
-- name: id
-  type: string
-- name: record_id
-  type: string
-- name: record_type
-  type: string
-- name: resource_id
-  type: string
-- name: resource
-  type: string
-- name: geoid
-  type: string
-- name: parameter
-  type: string
-- name: value
-  type: string
-- name: unit
-  type: string
-- name: dimension
-  type: string
-- name: dimension_value
-  type: string
-- name: dimension_unit
-  type: string
+  - name: id
+    type: string
+  - name: record_id
+    type: string
+  - name: record_type
+    type: string
+  - name: resource_id
+    type: string
+  - name: resource
+    type: string
+  - name: geoid
+    type: string
+  - name: parameter
+    type: string
+  - name: value
+    type: string
+  - name: unit
+    type: string
+  - name: dimension
+    type: string
+  - name: dimension_value
+    type: string
+  - name: dimension_unit
+    type: string

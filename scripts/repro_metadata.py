@@ -4,12 +4,12 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 
-# Mock needed components for local run without full PandasAI if needed, 
+# Mock needed components for local run without full PandasAI if needed,
 # but let's try to use the actual ones since they are in the environment.
 
 def test_metadata_introspection():
     load_dotenv()
-    
+
     # 1. Setup Connection (Mirrors sandbox_setup.py)
     DB_USER = os.getenv('DB_USER', 'biocirv_user')
     DB_PASS = os.getenv('DB_PASSWORD', 'biocirv_dev_password')
@@ -19,7 +19,7 @@ def test_metadata_introspection():
 
     # Try both dialects
     dialects = ["postgresql+psycopg2", "postgresql+pg8000"]
-    
+
     views = [
         "ca_biositing.analysis_data_view",
         "data_portal.usda_census_view"
@@ -29,16 +29,16 @@ def test_metadata_introspection():
         print(f"\n--- Testing Dialect: {dialect} ---")
         try:
             url = f"{dialect}://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-            
+
             # Simulate the search_path options
             all_schemas = "ca_biositing,data_portal"
             connect_args = {"options": f"-c search_path={all_schemas}"}
-            
+
             engine = create_engine(url, connect_args=connect_args)
-            
+
             with engine.connect() as conn:
                 print(f"✅ Connected successfully with {dialect}")
-                
+
                 # Check current search path
                 res = conn.execute(text("SHOW search_path")).fetchone()
                 print(f"Current search_path: {res[0]}")
@@ -46,11 +46,11 @@ def test_metadata_introspection():
                 for view_path in views:
                     schema, table = view_path.split(".")
                     print(f"\nIntrospecting {view_path}...")
-                    
+
                     # 1. Try SQLAlchemy Inspector
                     from sqlalchemy import inspect
                     inspector = inspect(engine)
-                    
+
                     columns = inspector.get_columns(table, schema=schema)
                     if columns:
                         print(f"  ✅ SQLAlchemy Inspector found {len(columns)} columns for {schema}.{table}")

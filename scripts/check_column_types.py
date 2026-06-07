@@ -21,28 +21,28 @@ def check_types():
     DB_HOST = "127.0.0.1"
     DB_PORT = "5434"
     DB_PASS = get_secret("biocirv-staging-ro-biocirv_readonly")
-    
+
     if not DB_PASS:
         print("Could not get password")
         return
 
     url = f'postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
     engine = create_engine(url)
-    
+
     query = """
     SELECT table_schema, table_name, column_name, data_type
     FROM information_schema.columns
     WHERE table_name IN ('analysis_data_view', 'usda_census_view')
     AND column_name = 'value';
     """
-    
+
     try:
         with engine.connect() as conn:
             print("--- Column Type Info ---")
             result = conn.execute(text(query))
             for row in result:
                 print(f"Table: {row.table_schema}.{row.table_name} | Column: {row.column_name} | Type: {row.data_type}")
-            
+
             # Also sample data
             print("\n--- Sample values from analysis_data_view ---")
             res = conn.execute(text("SELECT value FROM ca_biositing.analysis_data_view WHERE value IS NOT NULL LIMIT 5"))
@@ -53,7 +53,7 @@ def check_types():
             res = conn.execute(text("SELECT value FROM ca_biositing.usda_census_view WHERE value IS NOT NULL LIMIT 5"))
             for row in res:
                 print(f"Value: {row[0]!r} type: {type(row[0])}")
-                
+
     except Exception as e:
         print(f"Error: {e}")
 

@@ -233,7 +233,7 @@ class SandboxResponseParser(ResponseParser):
                 plot = val
             else:
                 answer = val
-            
+
             if hasattr(result, "last_code_executed") and getattr(result, "last_code_executed", None):
                 code = result.last_code_executed
 
@@ -299,7 +299,7 @@ class BioCirvAgent(Agent):
             answer = result.value
             if hasattr(result, "last_code_executed") and getattr(result, "last_code_executed", None):
                 code = result.last_code_executed
-            
+
             cls_name = result.__class__.__name__
             if "DataFrame" in cls_name:
                 data = result.value
@@ -401,7 +401,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
         # We rely on explicit schema naming during discovery
         url = f"postgresql+psycopg2://{connection_params['user']}:{connection_params['password']}@{connection_params['host']}:{connection_params['port']}/{connection_params['database']}"
         engine = create_engine(url)
-        
+
         # Test the engine immediately
         with engine.connect() as conn:
             print(f"  🔗 Introspection engine connected to {connection_params['database']}")
@@ -427,7 +427,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
         ]
 
     connectors = []
-    
+
     # Generate a session-specific timestamp to avoid stale registry hits in Colab
     import time
     session_ts = int(time.time())
@@ -502,7 +502,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
             # We wrap the empty pandas DataFrame in a PandasAI DataFrame
             # to satisfy the library's type checking.
             from pandasai import DataFrame as PA_DataFrame
-            
+
             # If we don't have manual columns, we try one last effort to get them
             # or we use a minimal set to at least allow the object to be created.
             effective_columns = manual_columns if manual_columns else ["id", "value"]
@@ -510,7 +510,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
 
             vdf = None
             errors = []
-            
+
             # Attempt 1: Advanced SQLDatasetLoader creation
             # This is the most robust way to ensure a data_loader is attached
             if HAS_ADVANCED_LOADERS:
@@ -519,7 +519,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                     # We use the FULL view name (schema.table) for the source config to avoid UndefinedTable
                     advanced_source_config = source_config.copy()
                     advanced_source_config["table"] = view
-                    
+
                     schema_data = {
                         "name": safe_name,
                         "description": f"BioCirv view: {view}",
@@ -528,7 +528,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                     }
                     pa_schema = SemanticLayerSchema(**schema_data)
                     loader = SQLDatasetLoader(pa_schema, dataset_path)
-                    
+
                     vdf = VirtualDataFrame(
                         data_loader=loader,
                         path=dataset_path
@@ -592,7 +592,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                             object.__setattr__(obj, attr, val)
                         except Exception:
                             continue
-                
+
                 # Inject row count into loader to prevent execution during serialization
                 loader = getattr(vdf, "_loader", None)
                 if loader:
@@ -601,7 +601,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                         object.__setattr__(loader, "_row_count", manual_rows)
                     except Exception:
                         pass
-                    
+
                     # Use method-level shadowing on the instance to return the manual count
                     # This prevents the loader from attempting to execute a COUNT(*) query
                     # during prompt serialization.
@@ -609,7 +609,7 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                         loader.get_row_count = lambda: manual_rows
                     except Exception:
                         pass
-                
+
                 # Shadow at the VDF instance level as well.
                 # In some versions of PandasAI, rows_count is a property or an attribute.
                 try:
@@ -630,10 +630,10 @@ def get_agent(llm: CBORGLLM, db_config: Dict[str, Any], qualified_views: Optiona
                 try:
                     # Construct dummy data with same columns
                     dummy_head = pd.DataFrame(columns=manual_columns if manual_columns else effective_columns)
-                    
+
                     # We use object.__setattr__ to bypass property setters and force the cache
                     object.__setattr__(vdf, "_head", dummy_head)
-                    
+
                     # Also shadow the head method on the instance to return the dummy
                     vdf.head = lambda n=5: dummy_head
                 except Exception:

@@ -39,7 +39,7 @@ def debug_chat():
             parser = agent.context.response_parser
         elif hasattr(agent, "response_parser"):
             parser = agent.response_parser
-        
+
         if parser and hasattr(parser, "get_trinity"):
             # We need the parser that was actually used to have the _last_result.
             # In PandasAI 2.3.x, the agent doesn't store the parser instance easily.

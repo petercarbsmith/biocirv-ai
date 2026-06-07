@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 mock_modules = [
     "plotly", "plotly.io", "plotly.graph_objects",
     "google", "google.cloud", "google.cloud.sql", "google.cloud.sql.connector",
-    "pg8000", "IPython", "IPython.display", "pandasai", "pandasai.llm", 
+    "pg8000", "IPython", "IPython.display", "pandasai", "pandasai.llm",
     "pandasai.llm.base", "pandasai.responses", "pandasai.responses.response_parser",
     "pandasai.core", "pandasai.core.response", "pandasai.core.response.parser"
 ]
@@ -37,7 +37,7 @@ try:
     print("Testing get_agent with explicit list...")
     views = ["ca_biositing.test_view", "data_portal.another_view"]
     agent = get_agent(llm, db_config, qualified_views=views)
-    
+
     print("✅ Agent logic validated")
 
 except Exception as e:

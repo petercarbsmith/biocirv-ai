@@ -27,6 +27,33 @@ def fetch_table_metadata(engine, table_name: str, schema: Optional[str] = None) 
     except Exception:
         return "Unknown columns"
 
+
+def fetch_column_info(engine, table_name: str, schema: Optional[str] = None) -> List[dict]:
+    """Returns structured column metadata for a given table or materialized view."""
+    query = text(
+        """
+        SELECT a.attname AS column_name,
+               format_type(a.atttypid, a.atttypmod) AS data_type
+        FROM pg_attribute a
+        JOIN pg_class t ON a.attrelid = t.oid
+        JOIN pg_namespace n ON t.relnamespace = n.oid
+        WHERE t.relname = :table
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+        """ + (" AND n.nspname = :schema" if schema else "")
+    )
+
+    params = {"table": table_name}
+    if schema:
+        params["schema"] = schema
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(query, params)
+            return [{"name": row[0], "type": row[1]} for row in result]
+    except Exception:
+        return []
+
 def discover_views(engine, schemas: List[str] = ["ca_biositing", "data_portal"]) -> List[dict]:
     """Automatically discovers all views in the specified schemas, returning list of {schema, table}."""
     query = text("""

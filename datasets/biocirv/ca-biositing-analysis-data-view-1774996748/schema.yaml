@@ -8,4 +8,4 @@ source:
     user: biocirv_readonly
     password: biocirv_dev_password
   table: analysis_data_view
-description: 'BioCirv view: ca_biositing.analysis_data_view'
+description: "BioCirv view: ca_biositing.analysis_data_view"

@@ -8,4 +8,4 @@ source:
     user: biocirv_readonly
     password: biocirv_dev_password
   table: usda_census_view
-description: 'BioCirv view: ca_biositing.usda_census_view'
+description: "BioCirv view: ca_biositing.usda_census_view"

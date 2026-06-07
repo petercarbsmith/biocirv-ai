@@ -1,0 +1,10 @@
+pandas==2.2.2
+pandasai==3.0.0b14
+pandasai-sql[postgres]==0.5.5
+sqlalchemy==2.0.30
+psycopg2-binary==2.9.9
+pg8000==1.31.2
+cloud-sql-python-connector==1.6.0
+python-dotenv==1.0.1
+plotly==5.22.0
+google-cloud-secret-manager==2.21.1

@@ -32,10 +32,10 @@ def test_db():
     DB_NAME = "biocirv-staging"
     DB_HOST = "127.0.0.1"
     DB_PORT = "5434"
-    
+
     # Try to get password from secret manager
     DB_PASS = get_secret("biocirv-staging-ro-biocirv_readonly")
-    
+
     if not DB_PASS:
         print("Falling back to .env or default password")
         DB_PASS = os.getenv('DB_PASSWORD', 'biocirv_dev_password')
@@ -63,8 +63,8 @@ def test_db():
             # 4. Check materialized views population
             print("\n--- Materialized Views Status ---")
             q_mv = """
-            SELECT schemaname, matviewname, ispopulated 
-            FROM pg_matviews 
+            SELECT schemaname, matviewname, ispopulated
+            FROM pg_matviews
             WHERE schemaname IN ('ca_biositing', 'data_portal');
             """
             result_mv = conn.execute(text(q_mv))
